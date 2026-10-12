@@ -27,6 +27,11 @@ BrepArray format facts and the roadmap.
   every change.
 - When you change code, give the complete changed file or a clear, minimal diff,
   and keep the existing tests passing. Add a test for every new behaviour.
+- Porting from NVIDIA's code (C++ or Python) is never line by line. Treat it as
+  a specification and a test oracle: understand what it does, then design the
+  Rust version from scratch (arenas with typed ids, enums instead of class
+  hierarchies, `Result` instead of status codes, no manual memory management).
+  Prove equivalence by running both on the same inputs and comparing results.
 - For BrepArray work, follow NVIDIA's schema and validator exactly, and cite the
   `BA_xxx` code a check corresponds to. If unsure of a format rule, say so rather
   than guess.

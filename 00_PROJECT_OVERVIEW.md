@@ -102,7 +102,9 @@ Not tested against NVIDIA's C++ kernel (SMLib): it could not be built here.
   1. Port the data layer to Rust. Done: this is usd_brep.
   2. Call the kernel through FFI over its 12k-line `SM_API` C-style wrapper,
      behind a Rust `Kernel` trait.
-  3. Later, port modules one at a time, testing each against the C++ original.
+  3. Later, reimplement modules one at a time. Not line by line: each module
+     is designed from the start as idiomatic Rust, with the C++ used only as
+     the specification and as a test oracle (same inputs, compare outputs).
 
 ## Design principles
 

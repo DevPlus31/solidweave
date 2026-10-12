@@ -1,0 +1,6 @@
+/target/
+/flat/
+# Demo output
+/out/
+*.stl
+tower.usda

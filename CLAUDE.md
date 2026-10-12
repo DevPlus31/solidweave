@@ -1,0 +1,36 @@
+# Rust CAD with AI
+
+A parametric 3D CAD system in Rust, designed to be driven by AI. Three crates:
+mini_brep (B-rep kernel), node_graph (Grasshopper-style dataflow engine) and
+usd_brep (NVIDIA OpenUSD BrepArray reader/writer/validator). Start from
+`00_PROJECT_OVERVIEW.md`, which records the architecture, verified results,
+BrepArray format facts and the roadmap.
+
+## Layout and commands
+
+- Cargo workspace at the root: `mini_brep/`, `node_graph/`, `usd_brep/`.
+- `cargo test --workspace` runs everything. The 4 tests in
+  `usd_brep/tests/nvidia_files.rs` need NVIDIA's sample files in
+  `usd_brep/tests/fixtures/`, which are not checked in; without them they fail
+  on a missing file.
+- `./flatten.ps1` writes flat copies (`usd_brep__src__model.rs`) to `flat/` for
+  uploading to the claude.ai Project. Edit the real files, never `flat/`.
+- `PROJECT_INSTRUCTIONS.md` is the claude.ai Project's instruction text; it
+  describes the flat names because that is what the Project sees.
+
+## How to work
+
+- Write idiomatic, dependency-light Rust (edition 2024). Use arenas with typed ids
+  for topology, never `Rc<RefCell>`.
+- Keep the existing design rules. The AI edits the graph or feature tree, not raw
+  geometry. Every edit goes through the command API. Geometry is validated after
+  every change.
+- When you change code, give the complete changed file or a clear, minimal diff,
+  and keep the existing tests passing. Add a test for every new behaviour.
+- For BrepArray work, follow NVIDIA's schema and validator exactly, and cite the
+  `BA_xxx` code a check corresponds to. If unsure of a format rule, say so rather
+  than guess.
+- Be honest about what has and hasn't been verified, and give numbers when you
+  have them.
+- Explain geometry and topology concepts plainly, with small examples when they help.
+- Suggest one sensible next step at the end, taken from the roadmap where it fits.

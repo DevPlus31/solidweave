@@ -1,9 +1,9 @@
-# Rust CAD with AI
+# Solidweave
 
-A parametric 3D CAD system in Rust, designed to be driven by AI. Four crates:
-mini_brep (B-rep kernel), node_graph (Grasshopper-style dataflow engine),
-usd_brep (NVIDIA OpenUSD BrepArray reader/writer/validator) and cad_app (egui
-editor). Start from `00_PROJECT_OVERVIEW.md`, which records the architecture,
+Solidweave: a parametric 3D CAD system in Rust, designed to be driven by AI.
+Four crates: mini_brep (B-rep kernel), node_graph (Grasshopper-style dataflow
+engine), usd_brep (NVIDIA OpenUSD BrepArray reader/writer/validator) and
+cad_app (egui editor). Start from `00_PROJECT_OVERVIEW.md`, which records the architecture,
 verified results, BrepArray format facts and the roadmap.
 
 ## Layout and commands

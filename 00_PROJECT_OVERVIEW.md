@@ -1,4 +1,4 @@
-# Rust CAD with AI: project overview
+# Solidweave: project overview
 
 Goal: a parametric 3D CAD system in Rust, built around a Grasshopper-style node
 graph that an AI can read and edit, with NVIDIA's OpenUSD B-rep format as the

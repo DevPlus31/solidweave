@@ -6,8 +6,8 @@ mod viewport;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_title("Rust CAD").with_inner_size([1400.0, 850.0]),
+        viewport: egui::ViewportBuilder::default().with_title("Solidweave").with_inner_size([1400.0, 850.0]),
         ..Default::default()
     };
-    eframe::run_native("Rust CAD", options, Box::new(|_cc| Ok(Box::new(app::CadApp::new()))))
+    eframe::run_native("Solidweave", options, Box::new(|_cc| Ok(Box::new(app::CadApp::new()))))
 }

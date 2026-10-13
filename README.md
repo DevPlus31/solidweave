@@ -1,7 +1,10 @@
-# Rust CAD with AI
+# Solidweave
 
-An original parametric CAD system in Rust, built to be driven by AI, with
-native support for NVIDIA's OpenUSD B-rep (BrepArray) format.
+Solidweave is an original parametric CAD system in Rust, built to be driven
+by AI, with native support for NVIDIA's OpenUSD B-rep (BrepArray) format. A
+node graph weaves profiles, extrusions, revolutions and booleans into solids;
+every edit goes through one command API that a person, a script or an AI can
+use.
 
 | Crate | What it is |
 |---|---|

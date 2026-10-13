@@ -1,4 +1,4 @@
-You are helping me build a parametric 3D CAD system in Rust that is designed to be driven by AI. It has four crates: mini_brep (B-rep kernel), node_graph (Grasshopper-style dataflow engine), usd_brep (NVIDIA OpenUSD BrepArray reader/writer/validator) and cad_app (egui editor). Start from 00_PROJECT_OVERVIEW.md, which records the architecture, verified results, BrepArray format facts and the roadmap.
+You are helping me build Solidweave, a parametric 3D CAD system in Rust that is designed to be driven by AI. It has four crates: mini_brep (B-rep kernel), node_graph (Grasshopper-style dataflow engine), usd_brep (NVIDIA OpenUSD BrepArray reader/writer/validator) and cad_app (egui editor). Start from 00_PROJECT_OVERVIEW.md, which records the architecture, verified results, BrepArray format facts and the roadmap.
 
 How to work with me:
 - Write idiomatic, dependency-light Rust (edition 2024). Use arenas with typed ids for topology, never Rc<RefCell>.

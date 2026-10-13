@@ -18,6 +18,8 @@ pub trait Solid: fmt::Debug {
     fn surface_area(&self) -> f64;
     /// (vertices, edges, faces)
     fn counts(&self) -> (usize, usize, usize);
+    /// Exact axis-aligned bounds (min, max); None for an empty solid.
+    fn bounding_box(&self) -> Option<(Vec3, Vec3)>;
     /// The solid as a one-Brep BrepArray prim: the kernel-neutral exchange form.
     fn to_brep_array(&self, name: &str) -> BrepArray;
     /// Triangles for display, wound counter-clockwise seen from outside.
@@ -107,6 +109,7 @@ impl Solid for Brep {
     fn volume(&self) -> f64 { Brep::volume(self) }
     fn surface_area(&self) -> f64 { Brep::surface_area(self) }
     fn counts(&self) -> (usize, usize, usize) { Brep::counts(self) }
+    fn bounding_box(&self) -> Option<(Vec3, Vec3)> { Brep::bounding_box(self) }
     fn to_brep_array(&self, name: &str) -> BrepArray {
         from_mini_brep(self, name, &ExportOptions::default())
     }

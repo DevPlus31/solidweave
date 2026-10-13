@@ -39,10 +39,11 @@ pub fn depths(graph: &Graph) -> HashMap<NodeId, usize> {
     depth
 }
 
-/// A canvas mirroring `graph`. Nodes go where `positions` says; the rest are
-/// laid out in columns by depth.
+/// A canvas mirroring `graph`. Nodes go where `positions` says; the rest
+/// (say, nodes an AI added) are laid out in columns by depth, below them.
 pub fn snarl_from_graph(graph: &Graph, positions: &Positions) -> Snarl<NodeId> {
     let depth = depths(graph);
+    let top = graph.node_ids().iter().filter_map(|id| positions.get(id)).map(|p| p[1] + 160.0).fold(0.0, f32::max);
     let mut next_y: HashMap<usize, f32> = HashMap::new();
     let mut snarl = Snarl::new();
     let mut on_canvas = HashMap::new();
@@ -51,7 +52,7 @@ pub fn snarl_from_graph(graph: &Graph, positions: &Positions) -> Snarl<NodeId> {
             Some(&[x, y]) => Pos2::new(x, y),
             None => {
                 let column = depth[&id];
-                let y = next_y.entry(column).or_insert(0.0);
+                let y = next_y.entry(column).or_insert(top);
                 *y += 130.0;
                 Pos2::new(column as f32 * 230.0, *y - 130.0)
             }
@@ -207,7 +208,7 @@ impl SnarlViewer<NodeId> for GraphViewer<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document::tests::example;
+    use crate::document::example;
 
     fn starter_graph() -> Graph {
         example("Drilled")
@@ -237,6 +238,18 @@ mod tests {
         let snarl = snarl_from_graph(&g, &Default::default());
         assert_eq!(snarl.node_ids().count(), g.node_ids().len());
         assert_eq!(snarl.wires().count(), g.wires().len());
+    }
+
+    #[test]
+    fn nodes_without_a_position_go_below_placed_ones() {
+        let mut g = starter_graph();
+        let positions: Positions = g.node_ids().into_iter().map(|id| (id, [0.0, 100.0 * id.0 as f32])).collect();
+        let lowest = positions.values().map(|p| p[1]).fold(0.0, f32::max);
+        let added = g.add_node(Box::new(node_graph::Sphere)); // as an AI would
+        let snarl = snarl_from_graph(&g, &positions);
+        let y = |id| snarl.get_node_info(canvas_node(&snarl, id)).unwrap().pos.y;
+        assert_eq!(y(NodeId(3)), 300.0, "placed nodes stay put");
+        assert!(y(added) > lowest, "{} is not below {lowest}", y(added));
     }
 
     #[test]

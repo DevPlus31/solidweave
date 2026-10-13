@@ -3,6 +3,7 @@ name = "cad_app"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+default-run = "cad_app"
 
 [dependencies]
 mini_brep = { path = "../mini_brep" }
@@ -12,3 +13,5 @@ rfd = "0.17"
 eframe = "0.36"
 egui = "0.36"
 egui-snarl = "0.12"
+ureq = { version = "3", features = ["json"] }
+serde_json = "1"

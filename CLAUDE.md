@@ -10,8 +10,18 @@ verified results, BrepArray format facts and the roadmap.
 
 - Cargo workspace at the root: `cad_app/` (egui editor, `cargo run -p cad_app`),
   `mini_brep/`, `node_graph/`, `usd_brep/`. Only `cad_app` has external
-  dependencies (eframe/egui 0.36, egui-snarl 0.12, rfd 0.17); keep the other
-  three dependency-free.
+  dependencies (eframe/egui 0.36, egui-snarl 0.12, rfd 0.17, ureq 3 and
+  serde_json 1 for the AI assistant); keep the other three dependency-free.
+- The AI assistant reads `ANTHROPIC_API_KEY` from the environment. Never
+  write a key into the repo. `cargo test -p cad_app -- --ignored` runs one
+  live session against the API (without a key it checks the error path).
+- MCP: `.mcp.json` registers the `solidweave-mcp` server (`cad_app/src/mcp.rs`,
+  binary in `cad_app/src/bin/`) with Claude Code. Its tools edit a graph
+  through node_graph's commands and save every edit to the `.swv` file
+  opened with `open`; the editor showing that file reloads it. To design a
+  part from here: call `open` on a `.swv` path, build with `write_graph` or
+  the edit tools, `check` until it reports no problems, `export` if asked.
+  The user can open the same file in the editor to watch.
 - The app opens on the user's real desktop. Do not drive it with synthetic
   mouse or keyboard input: the user may be using it at the same time.
   Screenshots are fine; test UI logic in `cad_app/src/document.rs`.

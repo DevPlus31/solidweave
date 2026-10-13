@@ -11,15 +11,22 @@ use.
 *The machined-block example: sliders drive two rectangles extruded into a
 block and a slot cutter, a boolean difference, and a union with a rib.*
 
+![Animation: an open box with mounting holes is built up in the editor (walls, then the floor, then the holes) and its sliders change hole size, width and height, the preview following each edit](docs/demo.gif)
+
+*An open box with four mounting holes, edited from outside the editor: each
+change rewrites the open `.swv` file, as the MCP tools do, and the editor
+reloads it.*
+
 | Crate | What it is |
 |---|---|
 | `mini_brep` | B-rep kernel: planes, cylinders, cones, spheres, tori; extrude, revolve, and booleans of planar solids; through-holes; exact volume and area; validation. |
-| `node_graph` | Grasshopper-style dataflow graph. Every edit goes through one command API, which is also the AI's interface. |
+| `node_graph` | Grasshopper-style dataflow graph. Every edit goes through one command API, which is also the AI's interface; `Graph::check` reports what the graph makes and what is wrong. |
 | `usd_brep` | Reads, writes and validates BrepArray `.usda` files. |
-| `cad_app` | Desktop editor (egui): node canvas, live 3D preview, save/open, undo/redo, export to `.usda` and `.stl`, examples. |
+| `cad_app` | Desktop editor (egui): node canvas, live 3D preview, AI assistant, save/open, undo/redo, export to `.usda` and `.stl`, examples. |
 
-Only `cad_app` has external dependencies (eframe/egui, egui-snarl, rfd); the
-other three use the standard library alone.
+Only `cad_app` has external dependencies (eframe/egui, egui-snarl, rfd, and
+ureq and serde_json for the AI assistant); the other three use the standard
+library alone.
 
 Saved graphs (`.swv`) are plain text in the same form the AI reads, for
 example:
@@ -31,10 +38,34 @@ n4 = Extrude(profile=n2.R, height=n3.N)
 n13 = SolidDifference(A=n4.S, B=n12.S)
 ```
 
+## Getting started
+
+Install Rust (https://rustup.rs), then:
+
 ```
-cargo test --workspace
-cargo run -p cad_app
+cargo run -p cad_app        # the editor; opens on the machined-block example
+cargo test --workspace      # every test
 ```
+
+File → Examples has two more parts. Drag a slider and the part updates.
+
+To use the AI assistant, set `ANTHROPIC_API_KEY` to your Anthropic API key
+before starting the editor, then describe a part or a change in the panel on
+the right. The AI edits the graph with the same commands as the canvas; it
+never edits geometry. After it finishes, the graph is evaluated and every
+solid checked against NVIDIA's BrepArray rules, and any problems go back to
+it to fix. Its whole turn is one undo step. This is an early feature: it has
+been tested with recorded replies, not yet measured on many real prompts.
+
+### From Claude Code (or any MCP client)
+
+`solidweave-mcp` is an MCP server with the same tools, plus `open`,
+`export` and `guide`. In this repository Claude Code finds it through
+`.mcp.json`; elsewhere, register it with
+`claude mcp add solidweave -- cargo run -q -p cad_app --bin solidweave-mcp`
+(run from the repository). Ask for a part saved to a `.swv` file, and open
+that file in the editor: it reloads on every change, so you can watch the
+part being built and adjust the sliders yourself.
 
 See `00_PROJECT_OVERVIEW.md` for the architecture, verified results and
 roadmap.

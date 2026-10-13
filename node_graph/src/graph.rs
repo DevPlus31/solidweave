@@ -1,12 +1,15 @@
 //! The graph: nodes + wires, with incremental, cached evaluation.
 //!
 //! Every edit (UI, script or AI) goes through these few methods:
-//!   add_node · connect · disconnect · set_number · remove_node · set_kernel
-//! so they are also the natural "tool calls" to expose to an LLM.
+//!   add_node · connect · disconnect · set_number · set_state · remove_node · set_kernel
+//! An AI reaches them through `command::Command`, which names ports instead
+//! of numbering them and explains every refusal.
 
 use crate::kernel::{Kernel, MiniBrep};
+use std::rc::Rc;
 use crate::nodes::NodeType;
-use crate::value::{Data, Value};
+use crate::kernel::Solid;
+use crate::value::{Data, Kind, Value};
 use std::collections::{HashSet, VecDeque};
 use std::fmt::Write as _;
 
@@ -133,6 +136,15 @@ impl Graph {
         Ok(())
     }
 
+    /// Change one `key=value` setting of a node, as its text form writes it
+    /// (a Slider's `value` or `range`). The node and its downstream recompute.
+    pub fn set_state(&mut self, id: NodeId, key: &str, value: &str) -> Result<(), String> {
+        let node = self.nodes.get_mut(id.0).and_then(Option::as_mut).ok_or_else(|| format!("no node n{}", id.0))?;
+        node.ty.set_state(key, value)?;
+        self.mark_dirty(id);
+        Ok(())
+    }
+
     // ─────────────────────── Evaluation ────────────────────────
 
     /// Recompute dirty nodes in dependency order. Errors stay local to the
@@ -191,7 +203,7 @@ impl Graph {
     }
 
     pub fn error(&self, id: NodeId) -> Option<&str> {
-        self.nodes[id.0].as_ref()?.error.as_deref()
+        self.nodes.get(id.0)?.as_ref()?.error.as_deref()
     }
 
     // ─────────────────────────── Reading ───────────────────────────
@@ -207,6 +219,28 @@ impl Graph {
 
     pub fn wires(&self) -> &[Wire] {
         &self.wires
+    }
+
+    /// The graph's results: solids that no other solid-making node consumes.
+    /// A boolean's inputs (the block and the cutter) are steps, not results.
+    pub fn result_solids(&self) -> Vec<(NodeId, Rc<dyn Solid>)> {
+        let makes_solids = |id: NodeId| self.node_type(id).is_some_and(|t| t.outputs().iter().any(|p| p.kind == Kind::Solid));
+        let mut out = Vec::new();
+        for id in self.node_ids() {
+            if !self.wires.iter().any(|w| w.from == id && makes_solids(w.to)) {
+                out.extend(self.solids_of(id).into_iter().map(|s| (id, s)));
+            }
+        }
+        out
+    }
+
+    /// Every solid on a node's outputs.
+    pub fn solids_of(&self, id: NodeId) -> Vec<Rc<dyn Solid>> {
+        let ports = self.node_type(id).map_or(0, |t| t.outputs().len());
+        (0..ports)
+            .flat_map(|p| self.output(id, p))
+            .filter_map(|v| if let Value::Solid(s) = v { Some(Rc::clone(s)) } else { None })
+            .collect()
     }
 
     // ─────────────────── Text form (for AI / diff / save) ───────────────────

@@ -4,13 +4,17 @@
 //!   nodes.rs : node types + longest-list matching
 //!   graph.rs : wiring, type/cycle checks, cached incremental evaluation, text form
 //!   kernel.rs: the geometry backend behind every node (mini_brep by default)
+//!   text.rs  : reading a graph back from its text form
+//!   command.rs: named edits for an AI, and the check report it reads back
 
+pub mod command;
 pub mod graph;
 pub mod kernel;
 pub mod nodes;
 pub mod text;
 pub mod value;
 
+pub use command::{Command, Report, catalog};
 pub use graph::{Graph, NodeId, Wire};
 pub use kernel::{BooleanOp, Kernel, MiniBrep, Solid};
 pub use nodes::*;

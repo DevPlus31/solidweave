@@ -6,7 +6,7 @@
 //! `n2 = Rectangle(x=n0.N, y=n1.N)  # @ 230,0`. The parser ignores comments,
 //! so the file stays plain, AI-readable text.
 
-use node_graph::{Graph, Kind, NodeId, Solid, Value};
+use node_graph::{Graph, NodeId, Solid};
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::rc::Rc;
@@ -93,6 +93,12 @@ n12 = Slider(value=6, range=0.5..20)
 n13 = Sphere(x=0, y=0, z=n11.N, radius=n12.N)
 n14 = Volume(solid=n5.S)
 ";
+
+/// The example whose menu name starts with `name_start`.
+pub fn example(name_start: &str) -> Graph {
+    let (_, text) = EXAMPLES.iter().find(|(n, _)| n.starts_with(name_start)).expect("an example of that name");
+    Graph::from_text(text).expect("examples are tested")
+}
 
 // ───────────────────────────── File format ─────────────────────────────
 
@@ -197,26 +203,8 @@ impl History {
 // ───────────────────────────── Results and export ─────────────────────────────
 
 /// The graph's results: solids that no other solid-making node consumes.
-/// A boolean's inputs (the block and the cutter) are steps, not results.
 pub fn result_solids(graph: &Graph) -> Vec<(NodeId, Rc<dyn Solid>)> {
-    let makes_solids = |id: NodeId| graph.node_type(id).is_some_and(|t| t.outputs().iter().any(|p| p.kind == Kind::Solid));
-    let mut out = Vec::new();
-    for id in graph.node_ids() {
-        let consumed = graph.wires().iter().any(|w| w.from == id && makes_solids(w.to));
-        if !consumed {
-            out.extend(solids_of(graph, id).into_iter().map(|s| (id, s)));
-        }
-    }
-    out
-}
-
-/// Every solid on a node's outputs.
-pub fn solids_of(graph: &Graph, id: NodeId) -> Vec<Rc<dyn Solid>> {
-    let ports = graph.node_type(id).map_or(0, |t| t.outputs().len());
-    (0..ports)
-        .flat_map(|p| graph.output(id, p))
-        .filter_map(|v| if let Value::Solid(s) = v { Some(Rc::clone(s)) } else { None })
-        .collect()
+    graph.result_solids()
 }
 
 /// The solids as one `.usda` layer, one BrepArray prim each, as `UsdExport` writes.
@@ -241,13 +229,8 @@ pub fn stl(solids: &[Rc<dyn Solid>]) -> String {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
-
-    pub fn example(name_start: &str) -> Graph {
-        let (_, text) = EXAMPLES.iter().find(|(n, _)| n.starts_with(name_start)).unwrap();
-        Graph::from_text(text).unwrap()
-    }
 
     fn volume_of_results(g: &Graph) -> f64 {
         result_solids(g).iter().map(|(_, s)| s.volume()).sum()

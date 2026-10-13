@@ -17,4 +17,4 @@ pub mod usda;
 pub mod validate;
 
 pub use model::*;
-pub use validate::{Issue, validate};
+pub use validate::{Issue, Severity, validate};

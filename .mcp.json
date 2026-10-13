@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "solidweave": {
+      "command": "cargo",
+      "args": ["run", "-q", "-p", "cad_app", "--bin", "solidweave-mcp"]
+    }
+  }
+}

@@ -20,10 +20,10 @@ cad_app ──► node_graph ──► mini_brep ◄── usd_brep
 ```
 
 Only `cad_app` has external dependencies (eframe/egui 0.36, egui-snarl 0.12,
-rfd 0.17 for file dialogs). Sizes (src, with tests): mini_brep ~2,700 lines,
+rfd 0.17 for file dialogs, ureq 3 and serde_json 1 for the AI assistant). Sizes (src, with tests): mini_brep ~2,700 lines,
 node_graph ~1,500, usd_brep ~3,200, cad_app ~1,100.
 
-### cad_app (egui 0.36 / eframe, egui-snarl 0.12, rfd 0.17)
+### cad_app (egui 0.36 / eframe, egui-snarl 0.12, rfd 0.17, ureq 3, serde_json 1)
 The desktop editor: `cargo run -p cad_app`.
 - Menu bar: File (New, Open, Save, Save As, Export `.usda` / `.stl`,
   Examples), Edit (Undo, Redo), View (Fit). Shortcuts Ctrl+N/O/S,
@@ -40,10 +40,31 @@ The desktop editor: `cargo run -p cad_app`.
   nodes from the registry (`node_graph::create`).
 - 3D preview in the middle: the graph's results only (solids no other
   geometry node consumes, so a boolean's cutter is not drawn over its
-  result), plus the selected nodes' solids in blue. Drawn with egui's
-  painter (orbit camera, back-face culling, flat shading, painter's
-  algorithm); fine for thousands of triangles. Export writes the same results.
+  result), plus the selected nodes' solids in blue. Orbit camera,
+  back-face culling and flat shading on the CPU, drawn on the GPU through
+  a wgpu paint callback with a depth buffer and 4x MSAA (falls back to
+  egui's painter and the painter's algorithm without wgpu). Export writes
+  the same results.
 - The text form (what the AI reads) and status at the bottom.
+- AI assistant on the right (`ai.rs`), hidden until View → AI assistant;
+  it needs `ANTHROPIC_API_KEY` set
+  (model `claude-opus-5-5`, or `SOLIDWEAVE_MODEL`). Claude gets the node
+  catalog (`node_graph::catalog`), the graph's text form and its check
+  report, and tools that map one to one onto `node_graph::Command`, plus
+  `write_graph` (through `Graph::from_text`) and `check`. Refused commands
+  go back to it as tool errors that say what would work. When it stops,
+  `Graph::check` runs; if there are problems they go back to it, up to 3
+  times. At most 25 requests per prompt. The whole turn is one undo step.
+  Requests run on a background thread; nodes it adds are laid out below the
+  existing ones. The conversation logic is tested with recorded replies;
+  `cargo test -p cad_app -- --ignored` runs one live session.
+- MCP server `solidweave-mcp` (`mcp.rs`, JSON-RPC over stdio, registered in
+  `.mcp.json`): the same tools for an outside AI client such as Claude Code,
+  plus `open`, `get_graph`, `guide` and `export`. Every edit is saved to the
+  open `.swv` file. The editor watches its open file and reloads it when it
+  changes on disk (one undo step; if there are unsaved edits it only warns),
+  and the server reads back edits the editor saved, so a person and an AI
+  can work on the same part.
 - Examples (`document.rs`, written as graph text and tested): machined
   block (booleans; the start-up document), drilled plate (holes), turned
   parts (revolve, torus, sphere).
@@ -246,9 +267,13 @@ and `brep_geometry_validator.exe` need a built SMLib; see `CLAUDE.md`.
    curved BrepArrays in `to_mini_brep`; revolving less than a full turn.
 4. Done: `Graph::from_text`, so the AI can write whole definitions; it also
    powers save/load and undo.
-5. LLM tool calling over the graph command API, with a validation feedback loop.
+5. Started: LLM tool calling over the graph command API, with a validation
+   feedback loop (`node_graph::command`, `cad_app/src/ai.rs`). Still to do:
+   measure how often real prompts give a valid part, first time and after
+   the fix rounds, on a fixed set of prompts; let the AI see results of
+   individual nodes (not only final solids).
 6. Started: `cad_app` with a node canvas, 3D preview, menus, save/load,
-   undo/redo, export and examples. Still to do: a wgpu viewport with a depth
-   buffer, per-node preview toggles, fitting the canvas view on start, asking
+   undo/redo, export, examples and a wgpu depth-buffered viewport. Still to
+   do: per-node preview toggles, fitting the canvas view on start, asking
    before closing the window with unsaved changes.
 7. Binary `.usdc` support in usd_brep, or conversion through `usdcat`.

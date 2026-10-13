@@ -19,23 +19,36 @@ cad_app ──► node_graph ──► mini_brep ◄── usd_brep
                 └────── exports through ─────┘
 ```
 
-Only `cad_app` has external dependencies (eframe/egui 0.36, egui-snarl 0.12).
-Sizes (src, with tests): mini_brep ~2,700 lines, node_graph ~1,300, usd_brep
-~3,200, cad_app ~600.
+Only `cad_app` has external dependencies (eframe/egui 0.36, egui-snarl 0.12,
+rfd 0.17 for file dialogs). Sizes (src, with tests): mini_brep ~2,700 lines,
+node_graph ~1,500, usd_brep ~3,200, cad_app ~1,100.
 
-### cad_app (egui 0.36 / eframe, egui-snarl 0.12)
+### cad_app (egui 0.36 / eframe, egui-snarl 0.12, rfd 0.17)
 The desktop editor: `cargo run -p cad_app`.
+- Menu bar: File (New, Open, Save, Save As, Export `.usda` / `.stl`,
+  Examples), Edit (Undo, Redo), View (Fit). Shortcuts Ctrl+N/O/S,
+  Ctrl+Shift+S, Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, Ctrl+F. The title shows the
+  file and a `*` when modified; New/Open/Examples ask before discarding.
+- Files (`.swv`) are the graph's text form with each node's canvas position
+  as a `# @ x,y` comment: plain text an AI can read and write.
+- Undo/redo keep snapshots of that text and rebuild the graph with
+  `Graph::from_text`; one pointer gesture (a whole slider drag) is one step.
 - Node canvas (egui-snarl) on the left. The `Graph` is the single source of
   truth: every canvas gesture calls the command API, and an edit the graph
   rejects (type mismatch, cycle) never appears; its reason shows in the
   status bar. Sliders edit through `set_number`; right-click adds or removes
   nodes from the registry (`node_graph::create`).
-- 3D preview in the middle: every solid on any node output, tessellated,
-  drawn with egui's painter (orbit camera, back-face culling, flat shading,
-  painter's-algorithm sort). Fine for thousands of triangles; a wgpu depth
-  buffer can replace it later.
+- 3D preview in the middle: the graph's results only (solids no other
+  geometry node consumes, so a boolean's cutter is not drawn over its
+  result), plus the selected nodes' solids in blue. Drawn with egui's
+  painter (orbit camera, back-face culling, flat shading, painter's
+  algorithm); fine for thousands of triangles. Export writes the same results.
 - The text form (what the AI reads) and status at the bottom.
-- Starts with a drilled plate driven by sliders.
+- Examples (`document.rs`, written as graph text and tested): machined
+  block (booleans; the start-up document), drilled plate (holes), turned
+  parts (revolve, torus, sphere).
+- Not checked by hand yet: file dialogs, shortcuts, live undo coalescing and
+  selection highlight are covered by unit tests of their logic only.
 
 ### mini_brep
 A small B-rep kernel (`lib.rs`, plus `boolean.rs`).
@@ -124,9 +137,12 @@ export).
   that failed, and downstream nodes get empty data.
 - Evaluation is incremental: only dirty nodes and their dependents recompute.
 - `to_text()` produces the compact form an LLM reads, for example
-  `n6 = Extrude(profile=n4.P, height=n5.S)`.
-- Missing: data trees (nested lists), several wires into one input, a parser
-  from text back to a graph.
+  `n6 = Extrude(profile=n4.P, height=n5.S)`, and `Graph::from_text()`
+  (`text.rs`) reads it back with node ids kept, lines in any order and
+  `#` comments ignored. Wires go through `connect`, so mismatches and cycles
+  are refused; errors name the line. Constants other than an input's
+  default are refused: numbers come from Sliders, so they stay editable.
+- Missing: data trees (nested lists), several wires into one input.
 
 ### usd_brep
 Pure-Rust support for NVIDIA's `BrepArray` prim
@@ -228,10 +244,11 @@ and `brep_geometry_validator.exe` need a built SMLib; see `CLAUDE.md`.
    `Profile`); revolve, cones, spheres, tori; booleans of planar solids.
    Still to do: booleans with curved faces; multi-shell export; import of
    curved BrepArrays in `to_mini_brep`; revolving less than a full turn.
-4. node_graph: a parser from text back to a graph, so the AI can write whole
-   definitions.
+4. Done: `Graph::from_text`, so the AI can write whole definitions; it also
+   powers save/load and undo.
 5. LLM tool calling over the graph command API, with a validation feedback loop.
-6. Started: `cad_app` with an egui-snarl node canvas and a painter-based 3D
-   preview. Still to do: undo/redo over the command API, save/load, a wgpu
-   viewport with a depth buffer, fitting the canvas view on start.
+6. Started: `cad_app` with a node canvas, 3D preview, menus, save/load,
+   undo/redo, export and examples. Still to do: a wgpu viewport with a depth
+   buffer, per-node preview toggles, fitting the canvas view on start, asking
+   before closing the window with unsaved changes.
 7. Binary `.usdc` support in usd_brep, or conversion through `usdcat`.

@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 mini_brep = { path = "../mini_brep" }
 node_graph = { path = "../node_graph" }
+usd_brep = { path = "../usd_brep" }
+rfd = "0.17"
 eframe = "0.36"
 egui = "0.36"
 egui-snarl = "0.12"

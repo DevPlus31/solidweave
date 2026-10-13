@@ -10,8 +10,11 @@ verified results, BrepArray format facts and the roadmap.
 
 - Cargo workspace at the root: `cad_app/` (egui editor, `cargo run -p cad_app`),
   `mini_brep/`, `node_graph/`, `usd_brep/`. Only `cad_app` has external
-  dependencies (eframe/egui 0.36, egui-snarl 0.12); keep the other three
-  dependency-free.
+  dependencies (eframe/egui 0.36, egui-snarl 0.12, rfd 0.17); keep the other
+  three dependency-free.
+- The app opens on the user's real desktop. Do not drive it with synthetic
+  mouse or keyboard input: the user may be using it at the same time.
+  Screenshots are fine; test UI logic in `cad_app/src/document.rs`.
 - `cargo test --workspace` runs everything, including tests against NVIDIA's
   sample files in `usd_brep/tests/fixtures/` (Apache-2.0, see NOTICE.md).
 - Examples: `kernel_demo` and `boolean_cases` (mini_brep), `graph_demo`

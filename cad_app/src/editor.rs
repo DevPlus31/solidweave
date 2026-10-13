@@ -7,6 +7,7 @@
 use egui::{Color32, Pos2, Ui};
 use egui_snarl::ui::{PinInfo, SnarlPin, SnarlViewer};
 use egui_snarl::{InPin, InPinId, OutPin, OutPinId, Snarl};
+use crate::document::Positions;
 use node_graph::{Graph, Kind, NODE_NAMES, NodeId, create};
 use std::collections::HashMap;
 
@@ -38,17 +39,24 @@ pub fn depths(graph: &Graph) -> HashMap<NodeId, usize> {
     depth
 }
 
-/// A canvas mirroring `graph`, nodes laid out in columns by depth.
-pub fn snarl_from_graph(graph: &Graph) -> Snarl<NodeId> {
+/// A canvas mirroring `graph`. Nodes go where `positions` says; the rest are
+/// laid out in columns by depth.
+pub fn snarl_from_graph(graph: &Graph, positions: &Positions) -> Snarl<NodeId> {
     let depth = depths(graph);
     let mut next_y: HashMap<usize, f32> = HashMap::new();
     let mut snarl = Snarl::new();
     let mut on_canvas = HashMap::new();
     for id in graph.node_ids() {
-        let column = depth[&id];
-        let y = next_y.entry(column).or_insert(0.0);
-        on_canvas.insert(id, snarl.insert_node(Pos2::new(column as f32 * 230.0, *y), id));
-        *y += 130.0;
+        let pos = match positions.get(&id) {
+            Some(&[x, y]) => Pos2::new(x, y),
+            None => {
+                let column = depth[&id];
+                let y = next_y.entry(column).or_insert(0.0);
+                *y += 130.0;
+                Pos2::new(column as f32 * 230.0, *y - 130.0)
+            }
+        };
+        on_canvas.insert(id, snarl.insert_node(pos, id));
     }
     for w in graph.wires() {
         snarl.connect(
@@ -57,6 +65,11 @@ pub fn snarl_from_graph(graph: &Graph) -> Snarl<NodeId> {
         );
     }
     snarl
+}
+
+/// Where each graph node sits on the canvas.
+pub fn canvas_positions(snarl: &Snarl<NodeId>) -> Positions {
+    snarl.nodes_pos_ids().map(|(_, pos, &id)| (id, [pos.x, pos.y])).collect()
 }
 
 /// Adapts a `Graph` to egui-snarl. Canvas nodes carry their graph `NodeId`.
@@ -194,7 +207,11 @@ impl SnarlViewer<NodeId> for GraphViewer<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::starter_graph;
+    use crate::document::tests::example;
+
+    fn starter_graph() -> Graph {
+        example("Drilled")
+    }
 
     /// The canvas node showing graph node `id`.
     fn canvas_node(snarl: &Snarl<NodeId>, id: NodeId) -> egui_snarl::NodeId {
@@ -217,7 +234,7 @@ mod tests {
     #[test]
     fn canvas_mirrors_every_node_and_wire() {
         let g = starter_graph();
-        let snarl = snarl_from_graph(&g);
+        let snarl = snarl_from_graph(&g, &Default::default());
         assert_eq!(snarl.node_ids().count(), g.node_ids().len());
         assert_eq!(snarl.wires().count(), g.wires().len());
     }
@@ -226,7 +243,7 @@ mod tests {
     fn rejected_edits_never_reach_the_canvas() {
         let mut g = starter_graph();
         g.evaluate();
-        let mut snarl = snarl_from_graph(&g);
+        let mut snarl = snarl_from_graph(&g, &Default::default());
         let mut message = None;
         let (wires_before, canvas_before) = (g.wires().len(), snarl.wires().count());
         let (volume, plate) = (named(&g, "Volume"), named(&g, "Rectangle"));
@@ -241,7 +258,7 @@ mod tests {
     #[test]
     fn accepted_edits_update_graph_and_canvas_together() {
         let mut g = starter_graph();
-        let mut snarl = snarl_from_graph(&g);
+        let mut snarl = snarl_from_graph(&g, &Default::default());
         let mut message = None;
         // Wire a new slider into the hole count, replacing the old one.
         let count = g.add_node(node_graph::slider(5.0, 0.0, 10.0));

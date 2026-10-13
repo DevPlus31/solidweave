@@ -47,6 +47,11 @@ pub trait NodeType {
     fn number_setting(&self) -> Option<(f64, std::ops::RangeInclusive<f64>)> {
         None
     }
+    /// Restores one `key=value` item of `state()` when a graph is read
+    /// back from text.
+    fn set_state(&mut self, key: &str, _value: &str) -> Result<(), String> {
+        Err(format!("{} has no setting '{key}'", self.name()))
+    }
 
     /// List-level solve. Override for nodes that consume or produce whole
     /// lists (e.g. Series). Default: longest-list matching over `solve`.
@@ -94,6 +99,21 @@ impl NodeType for NumberSlider {
     }
     fn number_setting(&self) -> Option<(f64, std::ops::RangeInclusive<f64>)> {
         Some((self.value, self.min..=self.max))
+    }
+    fn set_state(&mut self, key: &str, value: &str) -> Result<(), String> {
+        let num = |s: &str| s.trim().parse::<f64>().map_err(|_| format!("'{s}' is not a number"));
+        match key {
+            "value" => self.value = num(value)?,
+            "range" => {
+                let (lo, hi) = value.split_once("..").ok_or_else(|| format!("range '{value}' should look like 0..10"))?;
+                (self.min, self.max) = (num(lo)?, num(hi)?);
+                if self.min > self.max {
+                    return Err(format!("range {value} is reversed"));
+                }
+            }
+            _ => return Err(format!("Slider has no setting '{key}'")),
+        }
+        Ok(())
     }
 }
 

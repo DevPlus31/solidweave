@@ -1,6 +1,7 @@
 //! Desktop editor: a node canvas driving node_graph, with a live 3D preview.
 
 mod app;
+mod document;
 mod editor;
 mod viewport;
 

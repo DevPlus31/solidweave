@@ -3,36 +3,39 @@
 //! algorithm). Fine for previewing a few thousand triangles; a GPU depth
 //! buffer (wgpu) can replace it later without changing the camera.
 
+use crate::document::{result_solids, solids_of};
 use egui::{Color32, Pos2, Rect, Sense, Shape, Stroke, Ui};
 use mini_brep::Vec3;
-use node_graph::{Graph, Value};
+use node_graph::{Graph, NodeId};
 
-/// Every triangle of every solid the graph currently produces.
+/// Triangles to draw: the graph's results, and the solids of the selected
+/// nodes, highlighted.
 #[derive(Default)]
 pub struct Scene {
     pub triangles: Vec<[Vec3; 3]>,
+    pub highlighted: Vec<[Vec3; 3]>,
 }
 
 impl Scene {
-    /// Previews all solids on any node output, like Grasshopper does.
-    pub fn from_graph(graph: &Graph) -> Self {
-        let mut triangles = Vec::new();
-        for id in graph.node_ids() {
-            let outputs = graph.node_type(id).map_or(0, |t| t.outputs().len());
-            for port in 0..outputs {
-                for v in graph.output(id, port) {
-                    if let Value::Solid(s) = v {
-                        triangles.extend(s.tessellate());
-                    }
-                }
+    /// The graph's results (solids no other geometry node consumes), plus
+    /// the solids of `selected` nodes, highlighted even when they are only
+    /// steps, like a boolean's cutter.
+    pub fn from_graph(graph: &Graph, selected: &[NodeId]) -> Self {
+        let mut scene = Scene::default();
+        for (id, s) in result_solids(graph) {
+            if !selected.contains(&id) {
+                scene.triangles.extend(s.tessellate());
             }
         }
-        Scene { triangles }
+        for &id in selected {
+            scene.highlighted.extend(solids_of(graph, id).iter().flat_map(|s| s.tessellate()));
+        }
+        scene
     }
 
     /// Centre and radius of the bounding box, if there is anything to show.
     pub fn bounds(&self) -> Option<(Vec3, f64)> {
-        let mut pts = self.triangles.iter().flatten();
+        let mut pts = self.triangles.iter().chain(&self.highlighted).flatten();
         let first = *pts.next()?;
         let (lo, hi) = pts.fold((first, first), |(lo, hi), p| {
             (Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z)), Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z)))
@@ -118,7 +121,10 @@ pub fn show(ui: &mut Ui, camera: &mut Camera, scene: &Scene) {
     painter.text(
         rect.left_bottom() + egui::vec2(8.0, -8.0),
         egui::Align2::LEFT_BOTTOM,
-        format!("{} triangles · drag to orbit, scroll to zoom, double-click to fit", scene.triangles.len()),
+        format!(
+            "{} triangles · drag to orbit, scroll to zoom, double-click to fit · selected nodes show in blue",
+            scene.triangles.len() + scene.highlighted.len()
+        ),
         egui::FontId::proportional(12.0),
         Color32::GRAY,
     );
@@ -131,7 +137,9 @@ pub fn shaded_mesh(camera: &Camera, scene: &Scene, rect: Rect) -> egui::Mesh {
     // Key light from over the viewer's right shoulder.
     let light = (-forward + up * 0.6 + right * 0.4).normalize();
     let mut visible: Vec<(f64, [Pos2; 3], Color32)> = Vec::new();
-    for [a, b, c] in &scene.triangles {
+    // Results in warm metal; highlighted solids in blue.
+    let tinted = scene.triangles.iter().map(|t| (t, [215.0, 180.0, 140.0])).chain(scene.highlighted.iter().map(|t| (t, [110.0, 170.0, 255.0])));
+    for ([a, b, c], [r, g, bl]) in tinted {
         let n = (*b - *a).cross(*c - *a).normalize();
         if n.dot(eye - *a) <= 0.0 {
             continue; // facing away
@@ -140,7 +148,7 @@ pub fn shaded_mesh(camera: &Camera, scene: &Scene, rect: Rect) -> egui::Mesh {
             continue;
         };
         let shade = (0.3 + 0.7 * n.dot(light).max(0.0)) as f32;
-        let color = Color32::from_rgb((215.0 * shade) as u8, (180.0 * shade) as u8, (140.0 * shade) as u8);
+        let color = Color32::from_rgb((r * shade) as u8, (g * shade) as u8, (bl * shade) as u8);
         visible.push(((pa.1 + pb.1 + pc.1) / 3.0, [pa.0, pb.0, pc.0], color));
     }
     visible.sort_by(|x, y| y.0.total_cmp(&x.0));
@@ -173,7 +181,11 @@ fn draw_axes(painter: &egui::Painter, camera: &Camera, scene: &Scene, rect: Rect
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::starter_graph;
+    use crate::document::tests::example;
+
+    fn starter_graph() -> Graph {
+        example("Drilled")
+    }
 
     fn screen() -> Rect {
         Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0))
@@ -182,7 +194,7 @@ mod tests {
     fn starter_scene() -> Scene {
         let mut g = starter_graph();
         g.evaluate();
-        Scene::from_graph(&g)
+        Scene::from_graph(&g, &[])
     }
 
     #[test]
@@ -209,7 +221,7 @@ mod tests {
 
     #[test]
     fn only_front_faces_are_drawn() {
-        let scene = Scene { triangles: mini_brep::Brep::make_box(Vec3::new(0.0, 0.0, 0.0), 1.0, 1.0, 1.0).tessellate() };
+        let scene = Scene { triangles: mini_brep::Brep::make_box(Vec3::new(0.0, 0.0, 0.0), 1.0, 1.0, 1.0).tessellate(), ..Default::default() };
         let mut cam = Camera::default();
         cam.fit(&scene);
         // From a corner-on view, 3 of the 6 faces (6 of 12 triangles) face the camera.

@@ -8,6 +8,7 @@
 pub mod graph;
 pub mod kernel;
 pub mod nodes;
+pub mod text;
 pub mod value;
 
 pub use graph::{Graph, NodeId, Wire};

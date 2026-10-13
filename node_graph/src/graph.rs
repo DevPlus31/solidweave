@@ -74,6 +74,19 @@ impl Graph {
         NodeId(self.nodes.len() - 1)
     }
 
+    /// Adds a node under a chosen id, for reading a graph back from text with
+    /// its ids unchanged.
+    pub(crate) fn place_node(&mut self, id: NodeId, ty: Box<dyn NodeType>) -> Result<(), String> {
+        if self.nodes.get(id.0).is_some_and(Option::is_some) {
+            return Err(format!("n{} is defined twice", id.0));
+        }
+        if self.nodes.len() <= id.0 {
+            self.nodes.resize_with(id.0 + 1, || None);
+        }
+        self.nodes[id.0] = Some(Node { ty, outputs: Vec::new(), error: None, dirty: true });
+        Ok(())
+    }
+
     pub fn remove_node(&mut self, id: NodeId) -> Result<(), String> {
         self.node(id)?;
         let downstream: Vec<NodeId> =

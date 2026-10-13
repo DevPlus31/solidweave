@@ -11,10 +11,20 @@ use.
 | `mini_brep` | B-rep kernel: planes, cylinders, cones, spheres, tori; extrude, revolve, and booleans of planar solids; through-holes; exact volume and area; validation. |
 | `node_graph` | Grasshopper-style dataflow graph. Every edit goes through one command API, which is also the AI's interface. |
 | `usd_brep` | Reads, writes and validates BrepArray `.usda` files. |
-| `cad_app` | Desktop editor (egui): node canvas plus live 3D preview. |
+| `cad_app` | Desktop editor (egui): node canvas, live 3D preview, save/open, undo/redo, export to `.usda` and `.stl`, examples. |
 
-Only `cad_app` has external dependencies (eframe/egui, egui-snarl); the
+Only `cad_app` has external dependencies (eframe/egui, egui-snarl, rfd); the
 other three use the standard library alone.
+
+Saved graphs (`.swv`) are plain text in the same form the AI reads, for
+example:
+
+```
+n0 = Slider(value=60, range=10..100)
+n2 = Rectangle(x=n0.N, y=n1.N)          # @ 230,0
+n4 = Extrude(profile=n2.R, height=n3.N)
+n13 = SolidDifference(A=n4.S, B=n12.S)
+```
 
 ```
 cargo test --workspace

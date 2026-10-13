@@ -30,9 +30,12 @@ A small B-rep kernel.
   is used once forward and once reversed. A full circle is one closed edge
   (start vertex = end vertex); a cylinder face is closed by a seam edge it uses
   twice, as in NVIDIA's SMLib output.
-- Builders: `extrude(outer: &Ring, holes: &[Ring], h)` where a `Ring` is a
-  polygon or a circle; `make_box`, `make_cylinder`, `extrude_polygon`,
-  `extrude_profile` build on it. Low level: `add_vertex`, `add_edge`,
+- `Profile { outer: Ring, holes: Vec<Ring> }`, a `Ring` being a polygon or a
+  circle. `Profile::validate()` checks flatness, simple rings, holes strictly
+  inside the outline and apart (touching counts as overlap), since a misplaced
+  hole still gives valid topology.
+- Builders: `extrude(&Profile, h)`; `make_box`, `make_cylinder`,
+  `extrude_polygon`, `extrude_profile` build on it. Low level: `add_vertex`, `add_edge`,
   `add_face`, `add_shell`.
 - `face_uv_loops()` gives each face's trim loops in (u, v) ("pcurves"); u jumps
   a full turn across a seam so loops close. Mass properties, tessellation and
@@ -52,7 +55,11 @@ A small B-rep kernel.
 A Grasshopper-style dataflow engine on top of mini_brep.
 - Every port carries a list. Nodes define `solve` for one item, and the engine
   applies longest-list matching. List nodes override `solve_lists`.
-- Nodes: Slider, Series, MassAdd, Rectangle, Polygon, Extrude, Volume, UsdExport.
+- Nodes: Slider, Series, MassAdd, Rectangle, Polygon, Circle, Move,
+  Difference, Extrude, Volume, UsdExport. Profiles travel as
+  `Value::Profile` (outline plus holes). `Difference` cuts the whole holes
+  list out of each outline and validates the result, so a hole off the
+  plate fails there, at the node that caused it.
 - Geometry goes through a `Kernel` trait (`kernel.rs`). The graph owns one kernel
   (default `MiniBrep`) and passes it to every solve. Solids on wires are opaque
   `Rc<dyn Solid>` and can measure themselves and export themselves as a
@@ -144,10 +151,9 @@ Reproduce with `usd_brep/tools/compare_with_nvidia/run.sh <usd-brep checkout>`
 1. Done: a `UsdExport` node in node_graph that writes a graph's solids as BrepArray.
 2. Done: a `Kernel` trait in node_graph so backends can be swapped (mini_brep now,
    SMLib through FFI later).
-3. Done: mini_brep holes, genus in the Euler check, `Circle` and `Cylinder`.
-   Next for the kernel: expose profiles with holes and circles to node_graph
-   (a profile value type and `Kernel::extrude` taking it), then import of
-   curved BrepArrays in `to_mini_brep`.
+3. Done: mini_brep holes, genus in the Euler check, `Circle` and `Cylinder`;
+   profiles with holes and circles in node_graph (`Kernel::extrude` takes a
+   `Profile`). Still to do: import of curved BrepArrays in `to_mini_brep`.
 4. node_graph: a parser from text back to a graph, so the AI can write whole
    definitions.
 5. LLM tool calling over the graph command API, with a validation feedback loop.

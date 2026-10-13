@@ -462,7 +462,7 @@ mod tests {
     fn hole_wall_is_seen_from_its_opposite_side() {
         let hole = mini_brep::Ring::Circle { center: Vec3::new(0.0, 0.0, 0.0), radius: 1.0 };
         let sq = [(-2.0, -2.0), (2.0, -2.0), (2.0, 2.0), (-2.0, 2.0)].map(|(x, y)| Vec3::new(x, y, 0.0));
-        let solid = Brep::extrude(&mini_brep::Ring::Polygon(sq.to_vec()), &[hole], 1.0);
+        let solid = Brep::extrude(&mini_brep::Profile { outer: mini_brep::Ring::Polygon(sq.to_vec()), holes: vec![hole] }, 1.0);
         let b = written_and_read_back(&solid, "Plate");
         let issues = validate(&b);
         assert!(issues.is_empty(), "{issues:#?}");

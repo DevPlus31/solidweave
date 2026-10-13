@@ -1,4 +1,4 @@
-use mini_brep::{Brep, Ring, Surface, Vec3};
+use mini_brep::{Brep, Profile, Ring, Surface, Vec3};
 
 fn report(name: &str, b: &Brep) {
     let (v, e, f) = b.counts();
@@ -25,13 +25,15 @@ fn main() {
     println!();
     report("Cylinder r 5, h 10 (exact volume 250π = 785.398163)", &cyl);
 
-    let hole = Ring::Circle { center: Vec3::new(10.0, 5.0, 0.0), radius: 3.0 };
-    let plate = Brep::extrude(&Ring::Polygon(vec![
+    let outer = Ring::Polygon(vec![
         Vec3::new(0.0, 0.0, 0.0),
         Vec3::new(20.0, 0.0, 0.0),
         Vec3::new(20.0, 10.0, 0.0),
         Vec3::new(0.0, 10.0, 0.0),
-    ]), &[hole], 5.0);
+    ]);
+    let profile = Profile { outer, holes: vec![Ring::Circle { center: Vec3::new(10.0, 5.0, 0.0), radius: 3.0 }] };
+    println!("\nprofile check: {:?}", profile.validate());
+    let plate = Brep::extrude(&profile, 5.0);
     println!();
     report("Plate 20 x 10 x 5 with a hole of radius 3", &plate);
 

@@ -5,7 +5,7 @@
 //! default backend is mini_brep; SMLib through FFI can be added later as one
 //! more implementation without touching the nodes.
 
-use mini_brep::{Brep, Vec3};
+use mini_brep::{Brep, Profile};
 use std::fmt;
 use std::rc::Rc;
 use usd_brep::BrepArray;
@@ -24,8 +24,9 @@ pub trait Solid: fmt::Debug {
 /// Builds solids. Every solid it returns has already passed its validity checks.
 pub trait Kernel {
     fn name(&self) -> &'static str;
-    /// Extrude a closed planar profile in the XY plane straight up by `height`.
-    fn extrude(&self, profile: &[Vec3], height: f64) -> Result<Rc<dyn Solid>, String>;
+    /// Extrude a flat profile (outer boundary plus holes) straight up by
+    /// `height`. Each hole becomes a through-hole.
+    fn extrude(&self, profile: &Profile, height: f64) -> Result<Rc<dyn Solid>, String>;
 }
 
 /// The built-in mini_brep backend.
@@ -33,8 +34,11 @@ pub struct MiniBrep;
 
 impl Kernel for MiniBrep {
     fn name(&self) -> &'static str { "mini_brep" }
-    fn extrude(&self, profile: &[Vec3], height: f64) -> Result<Rc<dyn Solid>, String> {
-        let b = Brep::extrude_polygon(profile, height);
+    fn extrude(&self, profile: &Profile, height: f64) -> Result<Rc<dyn Solid>, String> {
+        // Check the region first: a hole outside the outline still makes
+        // valid topology, just the wrong shape.
+        profile.validate().map_err(|e| format!("invalid profile: {e}"))?;
+        let b = Brep::extrude(profile, height);
         b.validate().map_err(|e| format!("invalid solid: {e:?}"))?;
         Ok(Rc::new(b))
     }

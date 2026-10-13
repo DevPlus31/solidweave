@@ -142,7 +142,7 @@ mod tests {
     struct NoGeometry;
     impl Kernel for NoGeometry {
         fn name(&self) -> &'static str { "none" }
-        fn extrude(&self, _: &[mini_brep::Vec3], _: f64) -> Result<std::rc::Rc<dyn Solid>, String> {
+        fn extrude(&self, _: &mini_brep::Profile, _: f64) -> Result<std::rc::Rc<dyn Solid>, String> {
             Err("this kernel cannot extrude".into())
         }
     }
@@ -172,6 +172,75 @@ mod tests {
         g.evaluate();
         assert_eq!(g.kernel().name(), "none");
         assert_eq!(g.error(ext), Some("this kernel cannot extrude"));
+    }
+
+    /// 10 x 4 plate, 1 thick, with a row of `count` holes of radius 0.5 along
+    /// y = 2, at x = 2, 2 + spacing, …
+    fn drilled_plate(count: f64, spacing: f64) -> (Graph, [NodeId; 5]) {
+        let mut g = Graph::new();
+        let plate = g.add_node(Box::new(Rectangle));
+        let w = g.add_node(slider(10.0, 1.0, 50.0));
+        let d = g.add_node(slider(4.0, 1.0, 50.0));
+        g.connect(w, 0, plate, 0).unwrap();
+        g.connect(d, 0, plate, 1).unwrap();
+        let hole = g.add_node(Box::new(Circle));
+        let r = g.add_node(slider(0.5, 0.1, 5.0));
+        g.connect(r, 0, hole, 2).unwrap();
+        // x positions 2, 2 + spacing, …: a Series into Move gives one hole per x.
+        let xs = g.add_node(Box::new(Series));
+        let (start, step, n) = (g.add_node(slider(2.0, 0.0, 50.0)), g.add_node(slider(spacing, 0.0, 50.0)), g.add_node(slider(count, 0.0, 20.0)));
+        g.connect(start, 0, xs, 0).unwrap();
+        g.connect(step, 0, xs, 1).unwrap();
+        g.connect(n, 0, xs, 2).unwrap();
+        let moved = g.add_node(Box::new(Move));
+        let y = g.add_node(slider(2.0, 0.0, 50.0));
+        g.connect(hole, 0, moved, 0).unwrap();
+        g.connect(xs, 0, moved, 1).unwrap();
+        g.connect(y, 0, moved, 2).unwrap();
+        let cut = g.add_node(Box::new(Difference));
+        g.connect(plate, 0, cut, 0).unwrap();
+        g.connect(moved, 0, cut, 1).unwrap();
+        let ext = g.add_node(Box::new(Extrude));
+        g.connect(cut, 0, ext, 0).unwrap();
+        let vol = g.add_node(Box::new(Volume));
+        g.connect(ext, 0, vol, 0).unwrap();
+        g.evaluate();
+        (g, [step, cut, ext, vol, n])
+    }
+
+    #[test]
+    fn drilled_plate_from_a_row_of_moved_circles() {
+        let (mut g, [_, cut, ext, vol, n]) = drilled_plate(3.0, 3.0);
+        assert!(g.error(ext).is_none(), "{:?}", g.error(ext));
+        assert_eq!(g.output(cut, 0)[0].as_profile().unwrap().holes.len(), 3);
+        let pi = std::f64::consts::PI;
+        assert!((numbers(g.output(vol, 0))[0] - (40.0 - 3.0 * pi * 0.25)).abs() < 1e-9);
+        // One more hole: only the hole count's downstream recomputes.
+        g.set_number(n, 2.0).unwrap();
+        g.evaluate();
+        assert!((numbers(g.output(vol, 0))[0] - (40.0 - 2.0 * pi * 0.25)).abs() < 1e-9);
+        // The drilled solid exports and passes the BrepArray checks.
+        let export = g.add_node(Box::new(UsdExport));
+        g.connect(ext, 0, export, 0).unwrap();
+        g.evaluate();
+        assert!(g.error(export).is_none(), "{:?}", g.error(export));
+    }
+
+    #[test]
+    fn bad_hole_layouts_fail_at_the_difference_node() {
+        // Spacing 0.8 < diameter 1: neighbouring holes overlap.
+        let (mut g, [step, cut, ext, vol, n]) = drilled_plate(3.0, 0.8);
+        assert!(g.error(cut).unwrap().contains("overlap"), "{:?}", g.error(cut));
+        assert!(g.error(ext).unwrap().contains("upstream"));
+        assert!(g.output(vol, 0).is_empty());
+        // Spacing 4 with 3 holes puts the last at x = 10, on the plate's edge.
+        g.set_number(step, 4.0).unwrap();
+        g.evaluate();
+        assert!(g.error(cut).unwrap().contains("not strictly inside"), "{:?}", g.error(cut));
+        // Two holes fit: the error clears.
+        g.set_number(n, 2.0).unwrap();
+        g.evaluate();
+        assert!(g.error(cut).is_none() && g.error(ext).is_none());
     }
 
     #[test]

@@ -7,7 +7,7 @@
 
 use crate::kernel::Kernel;
 use crate::value::{Data, Kind, Value};
-use mini_brep::Vec3;
+use mini_brep::{Profile, Ring, Vec3};
 use std::rc::Rc;
 
 #[derive(Debug, Clone)]
@@ -123,19 +123,23 @@ impl NodeType for MassAddition {
 
 // ───────────────────────── Geometry ───────────────────────────
 
+fn profile(outer: Ring) -> Value {
+    Value::Profile(Rc::new(Profile::new(outer)))
+}
+
 pub struct Rectangle;
 impl NodeType for Rectangle {
     fn name(&self) -> &'static str { "Rectangle" }
     fn description(&self) -> &'static str { "Rectangle profile of width x by height y, at the origin on the XY plane." }
     fn inputs(&self) -> Vec<Port> { vec![num("x", 10.0), num("y", 5.0)] }
-    fn outputs(&self) -> Vec<Port> { vec![port("R", Kind::Polyline)] }
+    fn outputs(&self) -> Vec<Port> { vec![port("R", Kind::Profile)] }
     fn solve(&self, _: &dyn Kernel, i: &[Value]) -> Result<Vec<Value>, String> {
         let (x, y) = (i[0].as_number()?, i[1].as_number()?);
         if x <= 0.0 || y <= 0.0 {
             return Err(format!("rectangle size must be positive, got {x} x {y}"));
         }
         let p = |a, b| Vec3::new(a, b, 0.0);
-        Ok(vec![Value::Polyline(Rc::new(vec![p(0.0, 0.0), p(x, 0.0), p(x, y), p(0.0, y)]))])
+        Ok(vec![profile(Ring::Polygon(vec![p(0.0, 0.0), p(x, 0.0), p(x, y), p(0.0, y)]))])
     }
 }
 
@@ -144,7 +148,7 @@ impl NodeType for Polygon {
     fn name(&self) -> &'static str { "Polygon" }
     fn description(&self) -> &'static str { "Regular polygon with `sides` corners and circumradius `radius`, centred at the origin." }
     fn inputs(&self) -> Vec<Port> { vec![num("radius", 5.0), num("sides", 6.0)] }
-    fn outputs(&self) -> Vec<Port> { vec![port("P", Kind::Polyline)] }
+    fn outputs(&self) -> Vec<Port> { vec![port("P", Kind::Profile)] }
     fn solve(&self, _: &dyn Kernel, i: &[Value]) -> Result<Vec<Value>, String> {
         let r = i[0].as_number()?;
         let n = i[1].as_number()?.round() as usize;
@@ -157,18 +161,81 @@ impl NodeType for Polygon {
                 Vec3::new(r * a.cos(), r * a.sin(), 0.0)
             })
             .collect();
-        Ok(vec![Value::Polyline(Rc::new(pts))])
+        Ok(vec![profile(Ring::Polygon(pts))])
+    }
+}
+
+pub struct Circle;
+impl NodeType for Circle {
+    fn name(&self) -> &'static str { "Circle" }
+    fn description(&self) -> &'static str { "Circle profile of `radius` centred at (x, y) on the XY plane." }
+    fn inputs(&self) -> Vec<Port> { vec![num("x", 0.0), num("y", 0.0), num("radius", 1.0)] }
+    fn outputs(&self) -> Vec<Port> { vec![port("C", Kind::Profile)] }
+    fn solve(&self, _: &dyn Kernel, i: &[Value]) -> Result<Vec<Value>, String> {
+        let (x, y, radius) = (i[0].as_number()?, i[1].as_number()?, i[2].as_number()?);
+        if radius <= 0.0 {
+            return Err(format!("radius must be positive, got {radius}"));
+        }
+        Ok(vec![profile(Ring::Circle { center: Vec3::new(x, y, 0.0), radius })])
+    }
+}
+
+pub struct Move;
+impl NodeType for Move {
+    fn name(&self) -> &'static str { "Move" }
+    fn description(&self) -> &'static str { "Moves a profile by (x, y). Feed a list into x or y to make a row of copies." }
+    fn inputs(&self) -> Vec<Port> { vec![port("profile", Kind::Profile), num("x", 0.0), num("y", 0.0)] }
+    fn outputs(&self) -> Vec<Port> { vec![port("P", Kind::Profile)] }
+    fn solve(&self, _: &dyn Kernel, i: &[Value]) -> Result<Vec<Value>, String> {
+        let d = Vec3::new(i[1].as_number()?, i[2].as_number()?, 0.0);
+        Ok(vec![Value::Profile(Rc::new(i[0].as_profile()?.translated(d)))])
+    }
+}
+
+/// Region difference: each outer profile minus every hole profile.
+pub struct Difference;
+impl NodeType for Difference {
+    fn name(&self) -> &'static str { "Difference" }
+    fn description(&self) -> &'static str {
+        "Cuts every profile in `holes` out of each `outer` profile, as through-holes. Holes must lie strictly inside the outline and apart from each other."
+    }
+    fn inputs(&self) -> Vec<Port> { vec![port("outer", Kind::Profile), port("holes", Kind::Profile)] }
+    fn outputs(&self) -> Vec<Port> { vec![port("P", Kind::Profile)] }
+    fn solve(&self, _: &dyn Kernel, _: &[Value]) -> Result<Vec<Value>, String> { unreachable!() }
+    fn solve_lists(&self, _: &dyn Kernel, inputs: &[Data]) -> Result<Vec<Data>, String> {
+        // The whole holes list applies to every outline, so this is not
+        // item-by-item matching. An empty holes list cuts nothing.
+        let holes = inputs[1]
+            .iter()
+            .map(|v| {
+                let p = v.as_profile()?;
+                if !p.holes.is_empty() {
+                    return Err("a hole cannot have holes of its own".to_string());
+                }
+                Ok(p.outer.clone())
+            })
+            .collect::<Result<Vec<Ring>, String>>()?;
+        let out = inputs[0]
+            .iter()
+            .map(|v| {
+                let mut p = v.as_profile()?.clone();
+                p.holes.extend(holes.iter().cloned());
+                p.validate().map_err(|e| e.to_string())?;
+                Ok(Value::Profile(Rc::new(p)))
+            })
+            .collect::<Result<Data, String>>()?;
+        Ok(vec![out])
     }
 }
 
 pub struct Extrude;
 impl NodeType for Extrude {
     fn name(&self) -> &'static str { "Extrude" }
-    fn description(&self) -> &'static str { "Extrude a closed profile straight up by `height` into a B-rep solid." }
-    fn inputs(&self) -> Vec<Port> { vec![port("profile", Kind::Polyline), num("height", 1.0)] }
+    fn description(&self) -> &'static str { "Extrude a profile straight up by `height` into a B-rep solid. Its holes become through-holes." }
+    fn inputs(&self) -> Vec<Port> { vec![port("profile", Kind::Profile), num("height", 1.0)] }
     fn outputs(&self) -> Vec<Port> { vec![port("S", Kind::Solid)] }
     fn solve(&self, kernel: &dyn Kernel, i: &[Value]) -> Result<Vec<Value>, String> {
-        let profile = i[0].as_polyline()?;
+        let profile = i[0].as_profile()?;
         let h = i[1].as_number()?;
         if h <= 0.0 {
             return Err(format!("height must be positive, got {h}"));
@@ -234,6 +301,9 @@ pub fn library() -> Vec<Box<dyn NodeType>> {
         Box::new(MassAddition),
         Box::new(Rectangle),
         Box::new(Polygon),
+        Box::new(Circle),
+        Box::new(Move),
+        Box::new(Difference),
         Box::new(Extrude),
         Box::new(Volume),
         Box::new(UsdExport),

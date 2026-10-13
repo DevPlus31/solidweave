@@ -353,26 +353,22 @@ impl Brep {
 
     /// `extrude` for a polygon with polygonal holes.
     pub fn extrude_profile(outer: &[Vec3], holes: &[&[Vec3]], height: f64) -> Self {
-        let holes: Vec<Ring> = holes.iter().map(|h| Ring::Polygon(h.to_vec())).collect();
-        Self::extrude(&Ring::Polygon(outer.to_vec()), &holes, height)
+        let holes = holes.iter().map(|h| Ring::Polygon(h.to_vec())).collect();
+        Self::extrude(&Profile { outer: Ring::Polygon(outer.to_vec()), holes }, height)
     }
 
-    /// Extrudes a profile lying in a plane z = const straight up by `height`.
-    /// The profile is an outer ring plus holes, each a polygon or a circle.
-    /// Every hole becomes a through-hole (genus + 1). A circle becomes a
-    /// cylinder face with one seam edge. Polygons may run either way.
-    pub fn extrude(outer: &Ring, holes: &[Ring], height: f64) -> Self {
-        let ok = |r: &Ring| match r {
-            Ring::Polygon(p) => p.len() >= 3,
-            Ring::Circle { radius, .. } => *radius > TOLERANCE,
-        };
-        assert!(ok(outer) && holes.iter().all(ok) && height > TOLERANCE);
+    /// Extrudes a profile straight up by `height`. Every hole becomes a
+    /// through-hole (genus + 1). A circle becomes a cylinder face with one
+    /// seam edge. Polygons may run either way. The profile should pass
+    /// `Profile::validate`; this only asserts the basics.
+    pub fn extrude(profile: &Profile, height: f64) -> Self {
+        assert!(profile.rings().all(Ring::is_proper) && height > TOLERANCE);
         let mut b = Brep::new();
         let (x, z) = (Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 1.0));
         let up = z * height;
         // Each ring with its direction seen from +Z: outer counter-clockwise.
-        let rings: Vec<(Ring, bool)> = std::iter::once((outer.oriented(true), true))
-            .chain(holes.iter().map(|h| (h.oriented(false), false)))
+        let rings: Vec<(Ring, bool)> = std::iter::once((profile.outer.oriented(true), true))
+            .chain(profile.holes.iter().map(|h| (h.oriented(false), false)))
             .collect();
 
         // Corners: a polygon's, or one point on a circle, at the bottom and top.
@@ -456,9 +452,11 @@ impl Brep {
 
     /// Upright cylinder standing on the circle (`base`, `radius`).
     pub fn make_cylinder(base: Vec3, radius: f64, height: f64) -> Self {
-        Self::extrude(&Ring::Circle { center: base, radius }, &[], height)
+        Self::extrude(&Profile::new(Ring::Circle { center: base, radius }), height)
     }
 }
+
+// ─────────────────────────── Profiles ───────────────────────────
 
 /// One closed boundary of a profile lying in a plane z = const.
 #[derive(Debug, Clone, PartialEq)]
@@ -474,6 +472,201 @@ impl Ring {
         match self {
             Ring::Polygon(p) if (signed_area_xy(p) > 0.0) != ccw => Ring::Polygon(p.iter().rev().copied().collect()),
             r => r.clone(),
+        }
+    }
+
+    /// At least 3 points enclosing some area, or a positive radius.
+    pub fn is_proper(&self) -> bool {
+        match self {
+            Ring::Polygon(p) => p.len() >= 3 && signed_area_xy(p).abs() > TOLERANCE,
+            Ring::Circle { radius, .. } => *radius > TOLERANCE,
+        }
+    }
+
+    pub fn translated(&self, d: Vec3) -> Ring {
+        match self {
+            Ring::Polygon(p) => Ring::Polygon(p.iter().map(|&q| q + d).collect()),
+            Ring::Circle { center, radius } => Ring::Circle { center: *center + d, radius: *radius },
+        }
+    }
+
+    fn heights(&self) -> Vec<f64> {
+        match self {
+            Ring::Polygon(p) => p.iter().map(|q| q.z).collect(),
+            Ring::Circle { center, .. } => vec![center.z],
+        }
+    }
+}
+
+/// A flat region in a plane z = const: an outer ring with holes in it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Profile {
+    pub outer: Ring,
+    pub holes: Vec<Ring>,
+}
+
+/// Why a profile cannot be extruded. Rings are numbered 0 for the outer
+/// one and 1, 2, … for the holes; `hole` counts holes from 0.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProfileError {
+    /// Fewer than 3 points or no area, or a radius ≤ 0.
+    Degenerate { ring: usize },
+    /// Not all in one plane z = const.
+    NotFlat,
+    SelfIntersecting { ring: usize },
+    /// The hole crosses, touches or lies outside the outer boundary.
+    HoleNotInside { hole: usize },
+    /// Two holes cross, touch or lie one inside the other.
+    HolesOverlap { a: usize, b: usize },
+}
+
+impl std::fmt::Display for ProfileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ProfileError::Degenerate { ring } => write!(f, "ring {ring} is degenerate"),
+            ProfileError::NotFlat => write!(f, "rings are not in one plane z = const"),
+            ProfileError::SelfIntersecting { ring } => write!(f, "ring {ring} crosses itself"),
+            ProfileError::HoleNotInside { hole } => write!(f, "hole {hole} is not strictly inside the outer boundary"),
+            ProfileError::HolesOverlap { a, b } => write!(f, "holes {a} and {b} overlap or touch"),
+        }
+    }
+}
+
+impl std::error::Error for ProfileError {}
+
+impl Profile {
+    pub fn new(outer: Ring) -> Self {
+        Self { outer, holes: Vec::new() }
+    }
+
+    /// The outer ring, then the holes.
+    pub fn rings(&self) -> impl Iterator<Item = &Ring> {
+        std::iter::once(&self.outer).chain(&self.holes)
+    }
+
+    pub fn translated(&self, d: Vec3) -> Profile {
+        Profile { outer: self.outer.translated(d), holes: self.holes.iter().map(|h| h.translated(d)).collect() }
+    }
+
+    /// Checks that the region is well formed: flat, simple rings, every hole
+    /// strictly inside the outer ring and clear of the other holes. Touching
+    /// counts as overlapping, since it would make a non-manifold solid.
+    pub fn validate(&self) -> Result<(), ProfileError> {
+        let rings: Vec<&Ring> = self.rings().collect();
+        if let Some(ring) = rings.iter().position(|r| !r.is_proper()) {
+            return Err(ProfileError::Degenerate { ring });
+        }
+        let z0 = rings[0].heights()[0];
+        if rings.iter().flat_map(|r| r.heights()).any(|z| (z - z0).abs() > GEOMETRY_TOLERANCE) {
+            return Err(ProfileError::NotFlat);
+        }
+        for (ring, r) in rings.iter().enumerate() {
+            if let Ring::Polygon(p) = r
+                && polygon_self_intersects(p)
+            {
+                return Err(ProfileError::SelfIntersecting { ring });
+            }
+        }
+        for (hole, h) in self.holes.iter().enumerate() {
+            if !ring_inside(&self.outer, h) {
+                return Err(ProfileError::HoleNotInside { hole });
+            }
+        }
+        for a in 0..self.holes.len() {
+            for b in a + 1..self.holes.len() {
+                if !rings_apart(&self.holes[a], &self.holes[b]) {
+                    return Err(ProfileError::HolesOverlap { a, b });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+// Plan-view (XY) tests behind `Profile::validate`.
+
+fn xy(p: Vec3) -> P2 {
+    [p.x, p.y]
+}
+
+fn dist_2d(a: P2, b: P2) -> f64 {
+    (a[0] - b[0]).hypot(a[1] - b[1])
+}
+
+fn edges_2d(p: &[Vec3]) -> impl Iterator<Item = (P2, P2)> + '_ {
+    (0..p.len()).map(move |i| (xy(p[i]), xy(p[(i + 1) % p.len()])))
+}
+
+/// Do segments ab and cd cross or touch?
+fn segments_touch(a: P2, b: P2, c: P2, d: P2) -> bool {
+    let (d1, d2, d3, d4) = (cross2(c, d, a), cross2(c, d, b), cross2(a, b, c), cross2(a, b, d));
+    if d1 * d2 < 0.0 && d3 * d4 < 0.0 {
+        return true;
+    }
+    // p lies on segment qr.
+    let on = |q: P2, r: P2, p: P2, side: f64| {
+        side.abs() <= TOLERANCE
+            && p[0] >= q[0].min(r[0]) - TOLERANCE && p[0] <= q[0].max(r[0]) + TOLERANCE
+            && p[1] >= q[1].min(r[1]) - TOLERANCE && p[1] <= q[1].max(r[1]) + TOLERANCE
+    };
+    on(c, d, a, d1) || on(c, d, b, d2) || on(a, b, c, d3) || on(a, b, d, d4)
+}
+
+fn polygon_self_intersects(p: &[Vec3]) -> bool {
+    let e: Vec<(P2, P2)> = edges_2d(p).collect();
+    let n = e.len();
+    (0..n).any(|i| (i + 2..n).any(|j| !(i == 0 && j == n - 1) && segments_touch(e[i].0, e[i].1, e[j].0, e[j].1)))
+}
+
+fn polygons_touch(p: &[Vec3], q: &[Vec3]) -> bool {
+    edges_2d(p).any(|(a, b)| edges_2d(q).any(|(c, d)| segments_touch(a, b, c, d)))
+}
+
+/// Even–odd ray casting.
+fn point_in_polygon(pt: P2, p: &[Vec3]) -> bool {
+    edges_2d(p).fold(false, |inside, (a, b)| {
+        let crosses = (a[1] > pt[1]) != (b[1] > pt[1]) && pt[0] < a[0] + (pt[1] - a[1]) * (b[0] - a[0]) / (b[1] - a[1]);
+        inside != crosses
+    })
+}
+
+/// Distance from `pt` to the nearest edge of the polygon.
+fn distance_to_polygon(pt: P2, p: &[Vec3]) -> f64 {
+    edges_2d(p)
+        .map(|(a, b)| {
+            let ab = [b[0] - a[0], b[1] - a[1]];
+            let t = (((pt[0] - a[0]) * ab[0] + (pt[1] - a[1]) * ab[1]) / (ab[0] * ab[0] + ab[1] * ab[1])).clamp(0.0, 1.0);
+            dist_2d(pt, [a[0] + t * ab[0], a[1] + t * ab[1]])
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// Is `inner` strictly inside `outer`?
+fn ring_inside(outer: &Ring, inner: &Ring) -> bool {
+    match (outer, inner) {
+        (Ring::Polygon(p), Ring::Polygon(q)) => !polygons_touch(p, q) && point_in_polygon(xy(q[0]), p),
+        (Ring::Polygon(p), Ring::Circle { center, radius }) => {
+            point_in_polygon(xy(*center), p) && distance_to_polygon(xy(*center), p) > *radius
+        }
+        // A disc is convex, so a polygon whose corners are inside it is inside it.
+        (Ring::Circle { center, radius }, Ring::Polygon(q)) => q.iter().all(|v| dist_2d(xy(*v), xy(*center)) < *radius),
+        (Ring::Circle { center: c1, radius: r1 }, Ring::Circle { center: c2, radius: r2 }) => {
+            dist_2d(xy(*c1), xy(*c2)) + r2 < *r1
+        }
+    }
+}
+
+/// Are the regions inside `a` and `b` disjoint, without touching?
+fn rings_apart(a: &Ring, b: &Ring) -> bool {
+    match (a, b) {
+        (Ring::Polygon(p), Ring::Polygon(q)) => {
+            !polygons_touch(p, q) && !point_in_polygon(xy(q[0]), p) && !point_in_polygon(xy(p[0]), q)
+        }
+        (Ring::Polygon(p), Ring::Circle { center, radius }) | (Ring::Circle { center, radius }, Ring::Polygon(p)) => {
+            !point_in_polygon(xy(*center), p) && distance_to_polygon(xy(*center), p) > *radius
+        }
+        (Ring::Circle { center: c1, radius: r1 }, Ring::Circle { center: c2, radius: r2 }) => {
+            dist_2d(xy(*c1), xy(*c2)) > r1 + r2
         }
     }
 }
@@ -1140,7 +1333,7 @@ mod tests {
         // 4 x 4 x 2 block, hole of radius 1 off centre at (0.5, -0.5).
         let pi = std::f64::consts::PI;
         let hole = Ring::Circle { center: Vec3::new(0.5, -0.5, 0.0), radius: 1.0 };
-        let b = Brep::extrude(&Ring::Polygon(square(0.0, 0.0, 2.0)), &[hole], 2.0);
+        let b = Brep::extrude(&Profile { outer: Ring::Polygon(square(0.0, 0.0, 2.0)), holes: vec![hole] }, 2.0);
         // V 8 + 2, E 12 + 3, F 2 caps + 4 sides + 1 wall, H 2: 10 − 15 + 7 − 2 = 0.
         assert_eq!(b.counts(), (10, 15, 7));
         assert_eq!(b.validate(), Ok(()));
@@ -1155,7 +1348,7 @@ mod tests {
     fn square_hole_through_a_cylinder() {
         let pi = std::f64::consts::PI;
         let outer = Ring::Circle { center: Vec3::new(0.0, 0.0, 0.0), radius: 3.0 };
-        let b = Brep::extrude(&outer, &[Ring::Polygon(square(0.0, 0.0, 1.0))], 1.0);
+        let b = Brep::extrude(&Profile { outer, holes: vec![Ring::Polygon(square(0.0, 0.0, 1.0))] }, 1.0);
         assert_eq!(b.validate(), Ok(()));
         assert_eq!(b.genus(), Some(1));
         assert!(approx(b.volume(), 9.0 * pi - 4.0));
@@ -1164,7 +1357,8 @@ mod tests {
     #[test]
     fn uv_loops_close_across_the_seam() {
         let hole = Ring::Circle { center: Vec3::new(0.0, 0.0, 0.0), radius: 1.0 };
-        let b = Brep::extrude(&Ring::Circle { center: Vec3::new(0.0, 0.0, 0.0), radius: 2.0 }, &[hole], 1.0);
+        let outer = Ring::Circle { center: Vec3::new(0.0, 0.0, 0.0), radius: 2.0 };
+        let b = Brep::extrude(&Profile { outer, holes: vec![hole] }, 1.0);
         for face in &b.faces {
             for lp in b.face_uv_loops(face) {
                 for k in 0..lp.len() {
@@ -1185,7 +1379,7 @@ mod tests {
         let hole = Ring::Circle { center: Vec3::new(0.5, 0.0, 0.0), radius: 1.0 };
         for b in [
             Brep::make_cylinder(Vec3::new(1.0, 1.0, 1.0), 2.0, 3.0),
-            Brep::extrude(&Ring::Polygon(square(0.0, 0.0, 2.0)), &[hole], 2.0),
+            Brep::extrude(&Profile { outer: Ring::Polygon(square(0.0, 0.0, 2.0)), holes: vec![hole] }, 2.0),
         ] {
             let (area, vol) = mesh_area_volume(&b);
             // 64 segments per turn: a chord polygon is within 0.2% of its circle.
@@ -1208,6 +1402,57 @@ mod tests {
         b.vertices[0].point = Vec3::new(1.2, 0.0, 0.0); // off its bottom circle
         let errs = b.validate().unwrap_err();
         assert!(errs.iter().any(|e| matches!(e, BrepError::OffCurve { .. })), "{errs:?}");
+    }
+
+    fn circle(x: f64, y: f64, radius: f64) -> Ring {
+        Ring::Circle { center: Vec3::new(x, y, 0.0), radius }
+    }
+
+    #[test]
+    fn profile_validation_accepts_a_drilled_plate() {
+        let plate = Profile {
+            outer: Ring::Polygon(square(0.0, 0.0, 4.0)),
+            holes: vec![circle(-2.0, 0.0, 1.0), Ring::Polygon(square(2.0, 0.0, 1.0)), circle(0.0, 3.0, 0.5)],
+        };
+        assert_eq!(plate.validate(), Ok(()));
+        let disc = Profile { outer: circle(0.0, 0.0, 3.0), holes: vec![Ring::Polygon(square(0.0, 0.0, 1.5))] };
+        assert_eq!(disc.validate(), Ok(()), "square corners at 2.12 < 3");
+    }
+
+    #[test]
+    fn profile_validation_rejects_bad_holes() {
+        let plate = |holes: Vec<Ring>| Profile { outer: Ring::Polygon(square(0.0, 0.0, 2.0)), holes };
+        // Outside, crossing the edge, and touching it (tangent at x = 2).
+        for hole in [circle(5.0, 0.0, 1.0), circle(1.5, 0.0, 1.0), circle(1.0, 0.0, 1.0), Ring::Polygon(square(2.0, 0.0, 0.5))] {
+            assert_eq!(plate(vec![hole.clone()]).validate(), Err(ProfileError::HoleNotInside { hole: 0 }), "{hole:?}");
+        }
+        // Crossing, tangent, and one inside the other.
+        for (a, b) in [
+            (circle(-0.5, 0.0, 0.8), circle(0.5, 0.0, 0.8)),
+            (circle(-0.5, 0.0, 0.5), circle(0.5, 0.0, 0.5)),
+            (circle(0.0, 0.0, 1.5), Ring::Polygon(square(0.0, 0.0, 0.5))),
+            (Ring::Polygon(square(-0.5, 0.0, 0.6)), Ring::Polygon(square(0.5, 0.0, 0.6))),
+        ] {
+            assert_eq!(plate(vec![a, b]).validate(), Err(ProfileError::HolesOverlap { a: 0, b: 1 }));
+        }
+        // A square hole whose corners reach outside a circular outline.
+        let disc = Profile { outer: circle(0.0, 0.0, 1.0), holes: vec![Ring::Polygon(square(0.0, 0.0, 0.8))] };
+        assert_eq!(disc.validate(), Err(ProfileError::HoleNotInside { hole: 0 }));
+    }
+
+    #[test]
+    fn profile_validation_rejects_bad_rings() {
+        let p = |x, y| Vec3::new(x, y, 0.0);
+        // Lopsided, so its two lobes do not cancel to zero area.
+        let bow_tie = Profile::new(Ring::Polygon(vec![p(0.0, 0.0), p(3.0, 3.0), p(3.0, 0.0), p(0.0, 2.0)]));
+        assert_eq!(bow_tie.validate(), Err(ProfileError::SelfIntersecting { ring: 0 }));
+        let flat_line = Profile::new(Ring::Polygon(vec![p(0.0, 0.0), p(1.0, 0.0), p(2.0, 0.0)]));
+        assert_eq!(flat_line.validate(), Err(ProfileError::Degenerate { ring: 0 }));
+        let zero_hole = Profile { outer: Ring::Polygon(square(0.0, 0.0, 2.0)), holes: vec![circle(0.0, 0.0, 0.0)] };
+        assert_eq!(zero_hole.validate(), Err(ProfileError::Degenerate { ring: 1 }));
+        let raised = Ring::Circle { center: Vec3::new(0.0, 0.0, 1.0), radius: 0.5 };
+        let tilted = Profile { outer: Ring::Polygon(square(0.0, 0.0, 2.0)), holes: vec![raised] };
+        assert_eq!(tilted.validate(), Err(ProfileError::NotFlat));
     }
 
     #[test]

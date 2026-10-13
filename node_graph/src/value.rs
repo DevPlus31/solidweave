@@ -4,7 +4,7 @@
 //! single value. A slider outputs a list of one; a Series outputs many.
 
 use crate::kernel::Solid;
-use mini_brep::Vec3;
+use mini_brep::{Profile, Ring, Vec3};
 use std::fmt;
 use std::rc::Rc;
 
@@ -12,7 +12,7 @@ use std::rc::Rc;
 pub enum Kind {
     Number,
     Point,
-    Polyline,
+    Profile,
     Solid,
     Text,
 }
@@ -21,8 +21,8 @@ pub enum Kind {
 pub enum Value {
     Number(f64),
     Point(Vec3),
-    /// Closed planar profile.
-    Polyline(Rc<Vec<Vec3>>),
+    /// A flat region in a plane z = const: outer boundary plus holes.
+    Profile(Rc<Profile>),
     /// Rc so large geometry is shared between caches, not copied. Opaque, so
     /// any kernel's solids can flow through the graph.
     Solid(Rc<dyn Solid>),
@@ -37,7 +37,7 @@ impl Value {
         match self {
             Value::Number(_) => Kind::Number,
             Value::Point(_) => Kind::Point,
-            Value::Polyline(_) => Kind::Polyline,
+            Value::Profile(_) => Kind::Profile,
             Value::Solid(_) => Kind::Solid,
             Value::Text(_) => Kind::Text,
         }
@@ -48,10 +48,10 @@ impl Value {
             v => Err(format!("expected Number, got {:?}", v.kind())),
         }
     }
-    pub fn as_polyline(&self) -> Result<&[Vec3], String> {
+    pub fn as_profile(&self) -> Result<&Profile, String> {
         match self {
-            Value::Polyline(p) => Ok(p),
-            v => Err(format!("expected Polyline, got {:?}", v.kind())),
+            Value::Profile(p) => Ok(p),
+            v => Err(format!("expected Profile, got {:?}", v.kind())),
         }
     }
     pub fn as_solid(&self) -> Result<&dyn Solid, String> {
@@ -73,7 +73,13 @@ impl fmt::Display for Value {
         match self {
             Value::Number(n) => write!(f, "{n}"),
             Value::Point(p) => write!(f, "({}, {}, {})", p.x, p.y, p.z),
-            Value::Polyline(p) => write!(f, "Polyline[{} pts]", p.len()),
+            Value::Profile(p) => {
+                match &p.outer {
+                    Ring::Polygon(pts) => write!(f, "Profile[{} pts", pts.len())?,
+                    Ring::Circle { radius, .. } => write!(f, "Profile[circle r {radius}")?,
+                }
+                write!(f, ", {} holes]", p.holes.len())
+            }
             Value::Solid(b) => {
                 let (v, e, fc) = b.counts();
                 write!(f, "Solid[V{v} E{e} F{fc}]")

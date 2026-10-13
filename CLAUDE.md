@@ -29,10 +29,8 @@ BrepArray format facts and the roadmap.
   The checkout must be at a short path: from a long one, cl.exe's `/MP` child
   command lines pass 32k characters (errors C1083 '' and D8040), and `subst`
   does not help because the build tool resolves real paths.
-- `./flatten.ps1` writes flat copies (`usd_brep__src__model.rs`) to `flat/` for
-  uploading to the claude.ai Project. Edit the real files, never `flat/`.
-- `PROJECT_INSTRUCTIONS.md` is the claude.ai Project's instruction text; it
-  describes the flat names because that is what the Project sees.
+- `PROJECT_INSTRUCTIONS.md` holds the same working rules as instruction text
+  for a claude.ai Project.
 
 ## How to work
 

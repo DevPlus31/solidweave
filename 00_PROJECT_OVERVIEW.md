@@ -6,10 +6,8 @@ exchange format.
 
 ## File layout
 
-The repository is a normal Cargo workspace (`mini_brep/`, `node_graph/`,
-`usd_brep/`); run `cargo test` at the root. `flatten.ps1` writes a flat copy to
-`flat/` for a claude.ai Project knowledge base, where `usd_brep__src__model.rs`
-is `usd_brep/src/model.rs`.
+The repository is a normal Cargo workspace (`cad_app/`, `mini_brep/`,
+`node_graph/`, `usd_brep/`); run `cargo test --workspace` at the root.
 
 ## The crates
 

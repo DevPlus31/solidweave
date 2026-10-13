@@ -87,6 +87,9 @@ fn dot3(a: V3, b: V3) -> f64 {
 fn sub3(a: V3, b: V3) -> V3 {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
+fn cross3(a: V3, b: V3) -> V3 {
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+}
 
 impl BrepArray {
     pub(crate) fn attr_lens(&self) -> BTreeMap<&'static str, usize> {
@@ -925,7 +928,7 @@ impl Checker<'_> {
                 }
             }
         }
-        // RS_002: vertex positions agree with the ends of line and NURBS edge curves.
+        // RS_002: vertex positions agree with the ends of line, circle and NURBS edge curves.
         let tol = b.intersect_tol_3d.iter().cloned().fold(0.0, f64::max).max(1e-7) * 10.0;
         let slots = b.edge_curve_slots();
         let mut nurbs_offsets = Vec::new();
@@ -946,6 +949,18 @@ impl Checker<'_> {
                     )),
                     _ => None,
                 },
+                CurveType::Circle => {
+                    let c = &b.edge_circles;
+                    match (c.center.get(*slot), c.axis.get(*slot), c.ref_direction.get(*slot), c.radius.get(*slot)) {
+                        (Some(o), Some(a), Some(x), Some(&rad)) => {
+                            // C(t) = center + radius (cos t · ref + sin t · (axis × ref))
+                            let y = cross3(*a, *x);
+                            let at = |t: f64| [0, 1, 2].map(|k| o[k] + rad * (t.cos() * x[k] + t.sin() * y[k]));
+                            Some((at(r[0]), at(r[1])))
+                        }
+                        _ => None,
+                    }
+                }
                 CurveType::Nurbs => {
                     let c = &b.edge_nurbs;
                     nurbs_offsets.get(*slot).and_then(|&(cv, kn)| {

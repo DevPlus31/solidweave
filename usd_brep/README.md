@@ -9,7 +9,7 @@ with no C++ or OpenUSD dependency.
 | `usda` | Reads the USDA text format (prims, metadata, variants, relationships, dictionaries) and keeps what B-rep work needs |
 | `model` | The `omniSolid` schema as Rust types: all topology arrays, all 12 geometry APIs, typed tokens, per-Brep ranges |
 | `validate` | Structural checks ported from NVIDIA's `brep_validator.py`, using the same `BA_xxx` codes and tolerances |
-| `convert` | Export `mini_brep` solids to BrepArray (exact planes and lines), and import planar BrepArrays back |
+| `convert` | Export `mini_brep` solids to BrepArray (exact planes, cylinders, lines and circles), and import planar BrepArrays back |
 
 ## Usage
 
@@ -49,7 +49,7 @@ All results come from NVIDIA's own repository and tools
 | Read → write → read gives identical data | 130 / 130 (the 2 others are deliberately unreadable test files) |
 | Same pass/fail verdict as `brep_validator.py` | 132 / 132 files |
 | Reports the defect each `Test_BA_xxx` file was built to trigger | 107 / 107 |
-| Exported `mini_brep` solids pass NVIDIA's validator | 3 / 3 (box, L-bracket, hexagonal prism) |
+| Exported `mini_brep` solids pass NVIDIA's validator | 5 / 5 (box, L-bracket, hexagonal prism, cylinder, plate with a round and a square hole) |
 | NVIDIA's `Cube.usda` imports into `mini_brep` | V8 E12 F6, volume 1, area 6 |
 
 The two validators list exactly the same codes on 86 of the 132 files. On the

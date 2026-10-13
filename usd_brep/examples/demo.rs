@@ -4,7 +4,7 @@
 //!
 //! Usage: cargo run --example demo -- <output dir> [NVIDIA .usda files...]
 
-use mini_brep::{Brep, Vec3};
+use mini_brep::{Brep, Ring, Vec3};
 use usd_brep::convert::{ExportOptions, from_mini_brep, to_mini_brep};
 use usd_brep::validate::{is_valid, validate};
 use usd_brep::BrepArray;
@@ -26,6 +26,12 @@ fn main() {
         ("Box", Brep::make_box(Vec3::new(0.0, 0.0, 0.0), 20.0, 10.0, 5.0)),
         ("LBracket", Brep::extrude_polygon(&[p(0.0, 0.0), p(30.0, 0.0), p(30.0, 5.0), p(5.0, 5.0), p(5.0, 25.0), p(0.0, 25.0)], 12.0)),
         ("HexPrism", Brep::extrude_polygon(&hexagon, 8.0)),
+        ("Cylinder", Brep::make_cylinder(Vec3::new(0.0, 0.0, 0.0), 10.0, 15.0)),
+        ("HolePlate", Brep::extrude(
+            &Ring::Polygon(vec![p(0.0, 0.0), p(40.0, 0.0), p(40.0, 20.0), p(0.0, 20.0)]),
+            &[Ring::Circle { center: p(12.0, 10.0), radius: 5.0 }, Ring::Polygon(vec![p(25.0, 6.0), p(33.0, 6.0), p(33.0, 14.0), p(25.0, 14.0)])],
+            6.0,
+        )),
     ];
     println!("Export");
     for (name, solid) in &solids {

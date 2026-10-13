@@ -9,10 +9,12 @@ BrepArray format facts and the roadmap.
 ## Layout and commands
 
 - Cargo workspace at the root: `mini_brep/`, `node_graph/`, `usd_brep/`.
-- `cargo test --workspace` runs everything. The 4 tests in
-  `usd_brep/tests/nvidia_files.rs` need NVIDIA's sample files in
-  `usd_brep/tests/fixtures/`, which are not checked in; without them they fail
-  on a missing file.
+- `cargo test --workspace` runs everything, including tests against NVIDIA's
+  sample files in `usd_brep/tests/fixtures/` (Apache-2.0, see NOTICE.md).
+- Examples: `kernel_demo` (mini_brep), `graph_demo` (node_graph), `demo`
+  (usd_brep). Example names must stay unique across the workspace, or their
+  binaries overwrite each other in `target/`.
+- NVIDIA's Python validator: `usd_brep/tools/compare_with_nvidia/run.sh`.
 - `./flatten.ps1` writes flat copies (`usd_brep__src__model.rs`) to `flat/` for
   uploading to the claude.ai Project. Edit the real files, never `flat/`.
 - `PROJECT_INSTRUCTIONS.md` is the claude.ai Project's instruction text; it

@@ -18,22 +18,35 @@ node_graph  ──uses──►  mini_brep  ◄──converts──  usd_brep
 (visual program)       (B-rep kernel)            (NVIDIA BrepArray I/O)
 ```
 
-### mini_brep (~400 lines, no dependencies)
+### mini_brep (~1,100 lines with tests, no dependencies)
 A small B-rep kernel.
-- Geometry: `Vec3`, `Curve::Line`, `Surface::Plane`. The enums leave room for
-  circles, cylinders and NURBS.
+- Geometry: `Vec3`, `Curve::{Line, Circle}`, `Surface::{Plane, Cylinder}`, with
+  the BrepArray schema's own parameterisations (cylinder: u = angle, v =
+  height, normal away from the axis).
 - Topology: Vertex → Edge → CoEdge → Loop → Face → Shell, stored in flat arenas
-  with typed ids. No `Rc<RefCell>`.
+  with typed ids. No `Rc<RefCell>`. `Face::sense` says whether the surface
+  normal points out of the solid (false for a round hole's wall).
 - A CoEdge is a face's directional use of an edge. In a closed solid, every edge
-  is used once forward and once reversed.
-- Builders: `make_box`, `extrude_polygon`, `extrude_profile` (outer loop plus
-  holes, giving through-holes; concave loops work; loop direction is normalised).
-- `validate()` checks closed loops, planarity, edge use (twice, opposite
-  directions) and Euler–Poincaré per shell, V − E + F − H = 2 − 2·genus (must
-  be even and ≤ 2). `genus()` / `shell_genus()` report it. Euler cannot tell a
-  real through-hole from a defect with the same counts.
-- `volume()` (divergence theorem), `surface_area()` (both hole-aware),
-  `tessellate()` (ear clipping with hole bridges, outward winding), `to_stl()`.
+  is used once forward and once reversed. A full circle is one closed edge
+  (start vertex = end vertex); a cylinder face is closed by a seam edge it uses
+  twice, as in NVIDIA's SMLib output.
+- Builders: `extrude(outer: &Ring, holes: &[Ring], h)` where a `Ring` is a
+  polygon or a circle; `make_box`, `make_cylinder`, `extrude_polygon`,
+  `extrude_profile` build on it. Low level: `add_vertex`, `add_edge`,
+  `add_face`, `add_shell`.
+- `face_uv_loops()` gives each face's trim loops in (u, v) ("pcurves"); u jumps
+  a full turn across a seam so loops close. Mass properties, tessellation and
+  export all use it.
+- `validate()` checks closed loops, edges on their face's surface (sampled),
+  vertices on their edge's curve, edge use (twice, opposite directions) and
+  Euler–Poincaré per shell, V − E + F − H = 2 − 2·genus (even and ≤ 2).
+  `genus()` / `shell_genus()` report it. Euler cannot tell a real through-hole
+  from a defect with the same counts.
+- `volume()` and `surface_area()` are exact for planes and cylinders (Green's
+  theorem round the (u, v) loops). `tessellate()` ear-clips planar faces
+  (holes bridged) and grids cylinders at 64 segments per turn; `to_stl()`.
+- Limit: cylinder faces must have a rectangular (u, v) domain (what `extrude`
+  makes); lines on them must run along the axis and circles round it.
 
 ### node_graph (~600 lines)
 A Grasshopper-style dataflow engine on top of mini_brep.
@@ -65,7 +78,9 @@ Pure-Rust support for NVIDIA's `BrepArray` prim
   drives reading, writing and type checks.
 - `validate`: a port of NVIDIA's `brep_validator.py` using the same `BA_xxx`
   codes and tolerances, plus warnings `RS_001` and `RS_002`.
-- `convert`: `from_mini_brep` (exact planes, lines, UV trim curves) and
+- `convert`: `from_mini_brep` (exact planes, cylinders, lines and circles; UV
+  trim curves, rational quadratic for arcs; reversed faces get reversed loops
+  and an `opposite` void faceuse, as NVIDIA's OCCT importer does) and
   `to_mini_brep` (planar, single solid, manifold models only).
 
 Verified against NVIDIA's repository:
@@ -76,10 +91,17 @@ Verified against NVIDIA's repository:
 | Exact read → write → read round-trips | 130 / 130 |
 | Same pass/fail verdict as the Python validator | 132 / 132 |
 | Defect each test file targets is reported | 107 / 107 |
-| Exported solids pass NVIDIA's validator | all |
+| Exported solids pass NVIDIA's validator | 5 / 5 (box, L-bracket, hex prism, cylinder, plate with a round and a square hole), 2026-10-13 |
 | `Cube.usda` imported | volume 1 |
 
 Not tested against NVIDIA's C++ kernel (SMLib): it could not be built here.
+NVIDIA's Python validator is structural: its own `coverage_limits` files with
+broken cylinder seams pass it ("Seam validity needs the kernel"). Seams and
+curved geometry are checked by mini_brep's `validate()`, closed UV loops and
+exact mass properties instead.
+
+Reproduce with `usd_brep/tools/compare_with_nvidia/run.sh <usd-brep checkout>`
+(needs `pip install usd-core "usd-validation-nvidia>=1.22.0,<2"`).
 
 ## Key facts about the BrepArray format
 
@@ -122,8 +144,10 @@ Not tested against NVIDIA's C++ kernel (SMLib): it could not be built here.
 1. Done: a `UsdExport` node in node_graph that writes a graph's solids as BrepArray.
 2. Done: a `Kernel` trait in node_graph so backends can be swapped (mini_brep now,
    SMLib through FFI later).
-3. mini_brep: holes and genus in the Euler check (done). Still to do: `Circle`
-   and `Cylinder` geometry.
+3. Done: mini_brep holes, genus in the Euler check, `Circle` and `Cylinder`.
+   Next for the kernel: expose profiles with holes and circles to node_graph
+   (a profile value type and `Kernel::extrude` taking it), then import of
+   curved BrepArrays in `to_mini_brep`.
 4. node_graph: a parser from text back to a graph, so the AI can write whole
    definitions.
 5. LLM tool calling over the graph command API, with a validation feedback loop.

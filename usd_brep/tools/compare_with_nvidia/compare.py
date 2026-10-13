@@ -1,6 +1,8 @@
 """Compare Rust and Python validator results per file."""
 import json, sys
-py = json.load(open(sys.argv[1])); rs = json.load(open(sys.argv[2]))
+# Python on Windows writes backslash paths; the Rust side writes forward slashes.
+norm = lambda d: {k.replace("\\", "/"): v for k, v in d.items()}
+py = norm(json.load(open(sys.argv[1]))); rs = norm(json.load(open(sys.argv[2])))
 files = sorted(k for k in py if py[k]["breps"] > 0)
 agree = 0; detail = []
 both_code = 0; tested = 0

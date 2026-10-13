@@ -15,7 +15,7 @@
 //! Rc<RefCell<..>> graphs and keeps the structure easy to serialize and copy.
 
 use std::collections::HashMap;
-use std::f64::consts::TAU;
+use std::f64::consts::{FRAC_PI_2, TAU};
 use std::fmt::Write as _;
 use std::ops::{Add, Mul, Neg, Sub};
 
@@ -117,13 +117,24 @@ impl Curve {
 
 /// Exact surface a face lies on. Its own normal may point into or out of
 /// the solid; `Face::sense` says which.
+///
+/// Everything but the plane is a surface of revolution: with y = axis × ref_dir,
+/// S(u, v) = origin + ρ(v) · (cos u · ref_dir + sin u · y) + h(v) · axis,
+/// u the angle round the axis. `profile` gives ρ and h. Its normal is
+/// ∂S/∂u × ∂S/∂v, which points away from the axis (for a torus, away from the
+/// tube's centre line), as the BrepArray schema specifies.
 #[derive(Debug, Clone)]
 pub enum Surface {
     /// S(u, v) = origin + u · x + v · (normal × x), with x = `plane_x(normal)`.
     Plane { origin: Vec3, normal: Vec3 },
-    /// S(u, v) = origin + radius · (cos u · ref_dir + sin u · (axis × ref_dir)) + v · axis.
-    /// The normal points away from the axis.
+    /// ρ = radius, h = v.
     Cylinder { origin: Vec3, axis: Vec3, ref_dir: Vec3, radius: f64 },
+    /// ρ = radius + v · tan(semi_angle), h = v; `origin` is where ρ = radius.
+    Cone { origin: Vec3, axis: Vec3, ref_dir: Vec3, radius: f64, semi_angle: f64 },
+    /// ρ = radius · cos v, h = radius · sin v; v = ±π/2 at the poles.
+    Sphere { center: Vec3, axis: Vec3, ref_dir: Vec3, radius: f64 },
+    /// ρ = major + minor · cos v, h = minor · sin v.
+    Torus { origin: Vec3, axis: Vec3, ref_dir: Vec3, major_radius: f64, minor_radius: f64 },
 }
 
 /// A plane's u direction: horizontal where possible, so the faces of an
@@ -134,39 +145,81 @@ pub fn plane_x(normal: Vec3) -> Vec3 {
 }
 
 impl Surface {
-    pub fn point_at(&self, u: f64, v: f64) -> Vec3 {
+    /// A surface of revolution's frame (origin, axis, ref_dir); None for a plane.
+    pub fn revolution(&self) -> Option<(Vec3, Vec3, Vec3)> {
         match *self {
-            Surface::Plane { origin, normal } => {
-                let x = plane_x(normal);
-                origin + x * u + normal.cross(x) * v
+            Surface::Plane { .. } => None,
+            Surface::Cylinder { origin, axis, ref_dir, .. }
+            | Surface::Cone { origin, axis, ref_dir, .. }
+            | Surface::Torus { origin, axis, ref_dir, .. } => Some((origin, axis, ref_dir)),
+            Surface::Sphere { center, axis, ref_dir, .. } => Some((center, axis, ref_dir)),
+        }
+    }
+
+    /// The profile of a surface of revolution at v: (ρ, dρ/dv, h, dh/dv).
+    /// All zeros for a plane.
+    pub fn profile(&self, v: f64) -> (f64, f64, f64, f64) {
+        match *self {
+            Surface::Plane { .. } => (0.0, 0.0, 0.0, 0.0),
+            Surface::Cylinder { radius, .. } => (radius, 0.0, v, 1.0),
+            Surface::Cone { radius, semi_angle, .. } => {
+                let t = semi_angle.tan();
+                (radius + v * t, t, v, 1.0)
             }
-            Surface::Cylinder { origin, axis, ref_dir, radius } => {
-                origin + (ref_dir * u.cos() + axis.cross(ref_dir) * u.sin()) * radius + axis * v
+            Surface::Sphere { radius: r, .. } => (r * v.cos(), -r * v.sin(), r * v.sin(), r * v.cos()),
+            Surface::Torus { major_radius: big, minor_radius: r, .. } => {
+                (big + r * v.cos(), -r * v.sin(), r * v.sin(), r * v.cos())
             }
         }
     }
 
-    /// (u, v) of the surface point nearest to `p`; a cylinder's u is in (−π, π].
-    pub fn uv_of(&self, p: Vec3) -> [f64; 2] {
-        match *self {
-            Surface::Plane { origin, normal } => {
-                let (d, x) = (p - origin, plane_x(normal));
-                [d.dot(x), d.dot(normal.cross(x))]
+    pub fn point_at(&self, u: f64, v: f64) -> Vec3 {
+        match (self, self.revolution()) {
+            (Surface::Plane { origin, normal }, _) => {
+                let x = plane_x(*normal);
+                *origin + x * u + normal.cross(x) * v
             }
-            Surface::Cylinder { origin, axis, ref_dir, .. } => {
-                let d = p - origin;
-                [d.dot(axis.cross(ref_dir)).atan2(d.dot(ref_dir)), d.dot(axis)]
+            (_, Some((o, a, x))) => {
+                let (rho, _, h, _) = self.profile(v);
+                o + (x * u.cos() + a.cross(x) * u.sin()) * rho + a * h
             }
+            (_, None) => unreachable!("only planes have no axis"),
         }
+    }
+
+    /// (u, v) of the surface point nearest to `p`. Angles are in (−π, π].
+    pub fn uv_of(&self, p: Vec3) -> [f64; 2] {
+        let Some((o, a, x)) = self.revolution() else {
+            let Surface::Plane { origin, normal } = *self else { unreachable!() };
+            let (d, x) = (p - origin, plane_x(normal));
+            return [d.dot(x), d.dot(normal.cross(x))];
+        };
+        let d = p - o;
+        let (h, u) = (d.dot(a), d.dot(a.cross(x)).atan2(d.dot(x)));
+        let rho = (d - a * h).length();
+        let v = match *self {
+            Surface::Sphere { .. } => h.atan2(rho),
+            Surface::Torus { major_radius, .. } => h.atan2(rho - major_radius),
+            _ => h,
+        };
+        [u, v]
     }
 
     pub fn distance(&self, p: Vec3) -> f64 {
+        let Some((o, a, _)) = self.revolution() else {
+            let Surface::Plane { origin, normal } = *self else { unreachable!() };
+            return (p - origin).dot(normal).abs();
+        };
+        let d = p - o;
+        let h = d.dot(a);
+        let rho = (d - a * h).length();
         match *self {
-            Surface::Plane { origin, normal } => (p - origin).dot(normal).abs(),
-            Surface::Cylinder { origin, axis, radius, .. } => {
-                let d = p - origin;
-                ((d - axis * d.dot(axis)).length() - radius).abs()
-            }
+            Surface::Cylinder { radius, .. } => (rho - radius).abs(),
+            // Measured square to the cone's straight generating line.
+            Surface::Cone { radius, semi_angle, .. } => (rho - radius - h * semi_angle.tan()).abs() * semi_angle.cos(),
+            Surface::Sphere { radius, .. } => (rho.hypot(h) - radius).abs(),
+            Surface::Torus { major_radius, minor_radius, .. } => ((rho - major_radius).hypot(h) - minor_radius).abs(),
+            Surface::Plane { .. } => unreachable!(),
         }
     }
 }
@@ -219,6 +272,13 @@ pub struct Face {
     pub sense: bool,
     pub outer: Loop,
     pub holes: Vec<Loop>,
+    /// `Some([lo, hi])` when the face is the whole (u, v) rectangle lo..hi of
+    /// its surface, like a full turn of a cylinder or a whole sphere. Its
+    /// loops then only record which edges bound it (a sphere's poles are
+    /// points, so its loop does not close in (u, v)); area, volume and
+    /// tessellation use the rectangle. Exported with trimType `rectangular`,
+    /// as SMLib does.
+    pub uv_rect: Option<[[f64; 2]; 2]>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -324,7 +384,14 @@ impl Brep {
     /// from outside (holes clockwise). `sense`: does the surface normal point
     /// out of the solid?
     pub fn add_face(&mut self, surface: Surface, sense: bool, outer: Loop, holes: Vec<Loop>) -> FaceId {
-        self.faces.push(Face { surface, sense, outer, holes });
+        self.faces.push(Face { surface, sense, outer, holes, uv_rect: None });
+        FaceId(self.faces.len() - 1)
+    }
+
+    /// Adds a face that is the whole (u, v) rectangle `[lo, hi]` of its
+    /// surface; see `Face::uv_rect`.
+    pub fn add_rect_face(&mut self, surface: Surface, sense: bool, outer: Loop, rect: [[f64; 2]; 2]) -> FaceId {
+        self.faces.push(Face { surface, sense, outer, holes: Vec::new(), uv_rect: Some(rect) });
         FaceId(self.faces.len() - 1)
     }
 
@@ -429,7 +496,7 @@ impl Brep {
                         vec![ce(seam, true), ce(*ct, true), ce(seam, false), ce(*cb, false)]
                     };
                     let surface = Surface::Cylinder { origin: *center, axis: z, ref_dir: x, radius: *radius };
-                    faces.push(b.add_face(surface, *ccw, Loop { coedges }, Vec::new()));
+                    faces.push(b.add_rect_face(surface, *ccw, Loop { coedges }, [[0.0, 0.0], [TAU, height]]));
                 }
                 _ => {
                     let n = bot.len();
@@ -454,6 +521,163 @@ impl Brep {
     pub fn make_cylinder(base: Vec3, radius: f64, height: f64) -> Self {
         Self::extrude(&Profile::new(Ring::Circle { center: base, radius }), height)
     }
+
+    /// Revolves a closed polygon a full turn round the Z axis. Points are
+    /// `[r, z]`: distance from the axis (≥ 0) and height. The profile should
+    /// pass `check_revolve_profile`.
+    ///
+    /// Each profile edge sweeps out one face: a horizontal edge a flat disc or
+    /// ring, a vertical one a cylinder, a slanted one a cone (with its tip on
+    /// the axis if the edge reaches it). Edges lying on the axis sweep
+    /// nothing. Each corner off the axis sweeps a circle; each curved face is
+    /// closed by a seam at u = 0, used twice, as for `extrude`.
+    pub fn revolve(profile: &[[f64; 2]]) -> Self {
+        assert!(check_revolve_profile(profile).is_ok(), "invalid revolve profile");
+        let mut pts = profile.to_vec();
+        if signed_area_rz(&pts) < 0.0 {
+            pts.reverse(); // counter-clockwise in (r, z): material on the left
+        }
+        let n = pts.len();
+        let on_axis = |p: [f64; 2]| p[0] <= TOLERANCE;
+        let (x, z) = (Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 1.0));
+        let at = |p: [f64; 2]| Vec3::new(p[0], 0.0, p[1]);
+
+        let mut b = Brep::new();
+        // One vertex per corner that a circle or a cone tip needs.
+        let mut vertex: Vec<Option<VertexId>> = vec![None; n];
+        let mut circle: Vec<Option<EdgeId>> = vec![None; n];
+        for i in 0..n {
+            // A corner on the axis needs a vertex only as a cone's tip: the
+            // centre of a flat disc is not on any edge.
+            let (prev, next) = (pts[(i + n - 1) % n], pts[(i + 1) % n]);
+            let slanted_to = |q: [f64; 2]| !on_axis(q) && (q[1] - pts[i][1]).abs() > TOLERANCE;
+            let tip = on_axis(pts[i]) && (slanted_to(prev) || slanted_to(next));
+            if !on_axis(pts[i]) || tip {
+                vertex[i] = Some(b.add_vertex(at(pts[i])));
+            }
+            if let (false, Some(v)) = (on_axis(pts[i]), vertex[i]) {
+                let c = Curve::Circle { center: z * pts[i][1], axis: z, ref_dir: x, radius: pts[i][0] };
+                circle[i] = Some(b.add_edge(c, v, v));
+            }
+        }
+
+        let mut faces = Vec::new();
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let ([ri, zi], [rj, zj]) = (pts[i], pts[j]);
+            let (dr, dz) = (rj - ri, zj - zi);
+            if on_axis(pts[i]) && on_axis(pts[j]) {
+                continue; // on the axis: sweeps no area
+            }
+            // Every face uses circle i forwards and circle j backwards, so
+            // each circle is used once each way by its two faces.
+            let (ci, cj) = (circle[i].map(|e| CoEdge { edge: e, forward: true }), circle[j].map(|e| CoEdge { edge: e, forward: false }));
+            if dz.abs() <= TOLERANCE {
+                // A disc or ring. The outward normal is (dz, −dr) in (r, z), so
+                // it faces down when the edge runs outwards.
+                let normal = z * -dr.signum();
+                let (outer, hole) = if ri > rj { (ci, cj) } else { (cj, ci) };
+                let outer = Loop { coedges: vec![outer.expect("the larger circle exists")] };
+                let holes = hole.map(|h| Loop { coedges: vec![h] }).into_iter().collect();
+                faces.push(b.add_face(Surface::Plane { origin: z * zi, normal }, true, outer, holes));
+                continue;
+            }
+            let (vi, vj) = (vertex[i].expect("corner vertex"), vertex[j].expect("corner vertex"));
+            let seam = b.add_edge(Curve::Line { origin: at(pts[i]), dir: (at(pts[j]) - at(pts[i])).normalize() }, vi, vj);
+            let coedges: Vec<CoEdge> = [ci, Some(CoEdge { edge: seam, forward: true }), cj, Some(CoEdge { edge: seam, forward: false })]
+                .into_iter()
+                .flatten()
+                .collect();
+            let (surface, v0, v1) = if dr.abs() <= TOLERANCE {
+                let s = Surface::Cylinder { origin: Vec3::new(0.0, 0.0, 0.0), axis: z, ref_dir: x, radius: ri };
+                (s, zi.min(zj), zi.max(zj))
+            } else {
+                // The cone's axis points from its narrow end to its wide end,
+                // so its semi-angle is positive: NVIDIA's validator requires
+                // (0, π/2) (BA_515), although the schema allows (−π/2, π/2).
+                // v runs from 0 at the narrow end.
+                let ((r_narrow, z_narrow), z_wide) = if ri < rj { ((ri, zi), zj) } else { ((rj, zj), zi) };
+                let axis = z * (z_wide - z_narrow).signum();
+                let s = Surface::Cone { origin: z * z_narrow, axis, ref_dir: x, radius: r_narrow, semi_angle: (dr.abs() / dz.abs()).atan() };
+                (s, 0.0, dz.abs())
+            };
+            // The surface normal points away from the axis; the face's points
+            // away from the axis exactly when the edge runs upwards.
+            faces.push(b.add_rect_face(surface, dz > 0.0, Loop { coedges }, [[0.0, v0], [TAU, v1]]));
+        }
+        b.add_shell(faces);
+        b
+    }
+
+    /// Sphere with its poles on the Z axis, as SMLib builds it: one face, the
+    /// two poles as vertices, and one seam edge (a half circle at u = 0 from
+    /// the south pole to the north pole) used twice.
+    pub fn make_sphere(center: Vec3, radius: f64) -> Self {
+        assert!(radius > TOLERANCE);
+        let (x, y, z) = (Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 0.0, 1.0));
+        let mut b = Brep::new();
+        let south = b.add_vertex(center - z * radius);
+        let north = b.add_vertex(center + z * radius);
+        // In the plane of x and z: cos t · x + sin t · z, so axis = x × z = −y.
+        let meridian = Curve::Circle { center, axis: -y, ref_dir: x, radius };
+        let seam = b.add_edge(meridian, south, north);
+        let coedges = vec![CoEdge { edge: seam, forward: true }, CoEdge { edge: seam, forward: false }];
+        let surface = Surface::Sphere { center, axis: z, ref_dir: x, radius };
+        let face = b.add_rect_face(surface, true, Loop { coedges }, [[0.0, -FRAC_PI_2], [TAU, FRAC_PI_2]]);
+        b.add_shell(vec![face]);
+        b
+    }
+
+    /// Ring torus round the Z axis, as SMLib builds it: one face, one vertex
+    /// on the outer equator, and two closed seams (the outer equator and one
+    /// tube circle), each used twice. Genus 1.
+    pub fn make_torus(center: Vec3, major_radius: f64, minor_radius: f64) -> Self {
+        assert!(minor_radius > TOLERANCE && major_radius > minor_radius);
+        let (x, y, z) = (Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 0.0, 1.0));
+        let mut b = Brep::new();
+        let v = b.add_vertex(center + x * (major_radius + minor_radius));
+        let equator = b.add_edge(Curve::Circle { center, axis: z, ref_dir: x, radius: major_radius + minor_radius }, v, v);
+        let tube = b.add_edge(Curve::Circle { center: center + x * major_radius, axis: -y, ref_dir: x, radius: minor_radius }, v, v);
+        // In (u, v): along the equator (v = 0), up the tube circle, back, down.
+        let ce = |edge, forward| CoEdge { edge, forward };
+        let coedges = vec![ce(equator, true), ce(tube, true), ce(equator, false), ce(tube, false)];
+        let surface = Surface::Torus { origin: center, axis: z, ref_dir: x, major_radius, minor_radius };
+        let face = b.add_rect_face(surface, true, Loop { coedges }, [[0.0, 0.0], [TAU, TAU]]);
+        b.add_shell(vec![face]);
+        b
+    }
+}
+
+/// Twice the signed area of an (r, z) polygon (positive = counter-clockwise).
+fn signed_area_rz(p: &[[f64; 2]]) -> f64 {
+    (0..p.len()).map(|i| p[i][0] * p[(i + 1) % p.len()][1] - p[(i + 1) % p.len()][0] * p[i][1]).sum()
+}
+
+/// Checks a profile for `Brep::revolve`: a simple polygon in the half-plane
+/// r ≥ 0 that touches the axis, if at all, along one stretch of edges. A
+/// lone corner on the axis would pinch the solid to a point; two separate
+/// stretches would enclose a hollow.
+pub fn check_revolve_profile(profile: &[[f64; 2]]) -> Result<(), ProfileError> {
+    let as_xy: Vec<Vec3> = profile.iter().map(|p| Vec3::new(p[0], p[1], 0.0)).collect();
+    if profile.len() < 3 || signed_area_rz(profile).abs() <= TOLERANCE {
+        return Err(ProfileError::Degenerate { ring: 0 });
+    }
+    if profile.iter().any(|p| p[0] < -TOLERANCE) {
+        return Err(ProfileError::CrossesAxis);
+    }
+    if polygon_self_intersects(&as_xy) {
+        return Err(ProfileError::SelfIntersecting { ring: 0 });
+    }
+    let n = profile.len();
+    let on = |i: usize| profile[i % n][0] <= TOLERANCE;
+    let axis_edges = (0..n).filter(|&i| on(i) && on(i + 1)).count();
+    // Stretches of consecutive axis edges.
+    let stretches = (0..n).filter(|&i| on(i) && on(i + 1) && !(on(i + n - 1) && on(i))).count();
+    let lone_corner = (0..n).any(|i| on(i) && !on(i + n - 1) && !on(i + 1));
+    if lone_corner || stretches > 1 || (axis_edges == n) {
+        return Err(ProfileError::TouchesAxisAtPoints);
+    }
+    Ok(())
 }
 
 // ─────────────────────────── Profiles ───────────────────────────
@@ -518,6 +742,11 @@ pub enum ProfileError {
     HoleNotInside { hole: usize },
     /// Two holes cross, touch or lie one inside the other.
     HolesOverlap { a: usize, b: usize },
+    /// A revolve profile reaches r < 0, across the axis.
+    CrossesAxis,
+    /// A revolve profile meets the axis at a lone corner (a pinch) or along
+    /// more than one stretch (an enclosed hollow).
+    TouchesAxisAtPoints,
 }
 
 impl std::fmt::Display for ProfileError {
@@ -528,6 +757,10 @@ impl std::fmt::Display for ProfileError {
             ProfileError::SelfIntersecting { ring } => write!(f, "ring {ring} crosses itself"),
             ProfileError::HoleNotInside { hole } => write!(f, "hole {hole} is not strictly inside the outer boundary"),
             ProfileError::HolesOverlap { a, b } => write!(f, "holes {a} and {b} overlap or touch"),
+            ProfileError::CrossesAxis => write!(f, "the profile crosses the axis (r < 0)"),
+            ProfileError::TouchesAxisAtPoints => {
+                write!(f, "the profile must meet the axis along one stretch of edges, or not at all")
+            }
         }
     }
 }
@@ -761,27 +994,76 @@ impl UvCurve {
     }
 }
 
+/// The angles base + kπ (any whole k) lying between `a` and `b`.
+fn angles_in(base: f64, a: f64, b: f64) -> impl Iterator<Item = f64> {
+    let (lo, hi) = (a.min(b), a.max(b));
+    let first = base + ((lo - base) / std::f64::consts::PI).ceil() * std::f64::consts::PI;
+    (0..).map(move |k| first + k as f64 * std::f64::consts::PI).take_while(move |&t| t <= hi)
+}
+
+/// ∫ from `a` to `b` of the v-parts of a surface of revolution's integrals:
+/// [ρ h′, ρ² h′ − ρ ρ′ (o·a + h), ρ √(ρ′² + h′²)], for the flux through it
+/// and its area. `oa` is o·a. 8-point Gauss–Legendre is exact for the
+/// polynomials of cylinders and cones; spheres and tori are split into
+/// pieces of at most π/8, which brings the error below rounding.
+fn revolution_integrals(surface: &Surface, oa: f64, a: f64, b: f64) -> [f64; 3] {
+    const NODES: [(f64, f64); 4] = [
+        (0.183_434_642_495_649_8, 0.362_683_783_378_362),
+        (0.525_532_409_916_329, 0.313_706_645_877_887_3),
+        (0.796_666_477_413_626_7, 0.222_381_034_453_374_5),
+        (0.960_289_856_497_536_2, 0.101_228_536_290_376_3),
+    ];
+    let pieces = match surface {
+        Surface::Sphere { .. } | Surface::Torus { .. } => ((b - a).abs() / (std::f64::consts::PI / 8.0)).ceil().max(1.0) as usize,
+        _ => 1,
+    };
+    let f = |v: f64| {
+        let (rho, drho, h, dh) = surface.profile(v);
+        [rho * dh, rho * rho * dh - rho * drho * (oa + h), rho * drho.hypot(dh)]
+    };
+    let width = (b - a) / pieces as f64;
+    let mut sum = [0.0; 3];
+    for p in 0..pieces {
+        let mid = a + width * (p as f64 + 0.5);
+        for (x, w) in NODES {
+            for v in [mid - x * width / 2.0, mid + x * width / 2.0] {
+                let y = f(v);
+                for k in 0..3 {
+                    sum[k] += w * width / 2.0 * y[k];
+                }
+            }
+        }
+    }
+    sum
+}
+
 fn segments_for(angle: f64) -> usize {
     ((angle.abs() / TAU) * SEGMENTS_PER_TURN as f64).ceil().max(1.0) as usize
 }
 
 impl Brep {
     /// A face's loops in its own (u, v) parameter space, outer loop first,
-    /// each curve in its coedge's direction. Across a cylinder's seam u jumps
-    /// by a full turn, so each loop closes in (u, v) too.
+    /// each curve in its coedge's direction. Angles jump by a full turn
+    /// across a seam, so loops of trimmed faces close in (u, v) too. (A face
+    /// with `uv_rect` need not close: a sphere's poles are single points.)
     pub fn face_uv_loops(&self, face: &Face) -> Vec<Vec<UvCurve>> {
+        // Which parameters are angles, repeating every full turn.
+        let (u_turns, v_turns) = match face.surface {
+            Surface::Plane { .. } => (false, false),
+            Surface::Torus { .. } => (true, true),
+            _ => (true, false),
+        };
+        let shift = |from: f64, to: f64, on: bool| if on { ((to - from) / TAU).round() * TAU } else { 0.0 };
         std::iter::once(&face.outer)
             .chain(&face.holes)
             .map(|lp| {
                 let mut curves: Vec<UvCurve> = lp.coedges.iter().map(|&ce| self.coedge_uv(&face.surface, ce)).collect();
-                if let Surface::Cylinder { .. } = face.surface {
-                    // u is an angle: shift each curve by whole turns so it
-                    // starts where the previous one ended.
-                    for k in 1..curves.len() {
-                        if let (UvCurve::Line { a, b }, prev) = (curves[k], curves[k - 1].end()) {
-                            let shift = ((prev[0] - a[0]) / TAU).round() * TAU;
-                            curves[k] = UvCurve::Line { a: [a[0] + shift, a[1]], b: [b[0] + shift, b[1]] };
-                        }
+                // Shift each curve by whole turns so it starts where the
+                // previous one ended. Curved surfaces only have lines in (u, v).
+                for k in 1..curves.len() {
+                    if let (UvCurve::Line { a, b }, prev) = (curves[k], curves[k - 1].end()) {
+                        let (su, sv) = (shift(a[0], prev[0], u_turns), shift(a[1], prev[1], v_turns));
+                        curves[k] = UvCurve::Line { a: [a[0] + su, a[1] + sv], b: [b[0] + su, b[1] + sv] };
                     }
                 }
                 curves
@@ -793,6 +1075,7 @@ impl Brep {
         let curve = &self.edges[ce.edge.0].curve;
         let (t0, t1) = self.edge_range(ce.edge);
         let (ts, te) = if ce.forward { (t0, t1) } else { (t1, t0) };
+        let mid = curve.point_at((ts + te) / 2.0);
         match (surface, curve) {
             (Surface::Plane { .. }, Curve::Circle { center, axis, ref_dir, radius }) => {
                 let c = surface.uv_of(*center);
@@ -802,13 +1085,29 @@ impl Brep {
                 };
                 UvCurve::Arc { center: c, radius: *radius, x: dir(*ref_dir), y: dir(axis.cross(*ref_dir)), t0: ts, t1: te }
             }
-            (Surface::Cylinder { axis: cyl_axis, .. }, Curve::Circle { axis, .. }) => {
-                // A circle round the axis is a line of constant v; u follows t
-                // when the circle turns the same way as the cylinder.
-                let a = surface.uv_of(curve.point_at(ts));
-                UvCurve::Line { a, b: [a[0] + (te - ts) * axis.dot(*cyl_axis).signum(), a[1]] }
+            (Surface::Plane { .. }, Curve::Line { .. }) => {
+                UvCurve::Line { a: surface.uv_of(curve.point_at(ts)), b: surface.uv_of(curve.point_at(te)) }
             }
-            _ => UvCurve::Line { a: surface.uv_of(curve.point_at(ts)), b: surface.uv_of(curve.point_at(te)) },
+            (_, Curve::Circle { .. }) => {
+                // On a surface of revolution a circle is a parallel (u moves)
+                // or a meridian of a sphere or torus (v moves), at one radian
+                // per radian of t. Measure which way at the midpoint: a pole's
+                // u is undefined, so the ends would not do.
+                let m = surface.uv_of(mid);
+                // A small step the way the coedge runs.
+                let q = surface.uv_of(curve.point_at((ts + te) / 2.0 + 1e-6 * (te - ts).signum()));
+                let wrap = |d: f64| d - (d / TAU).round() * TAU;
+                let dir = [(wrap(q[0] - m[0]) / 1e-6).round(), (wrap(q[1] - m[1]) / 1e-6).round()];
+                let half = (te - ts).abs() / 2.0;
+                UvCurve::Line { a: [m[0] - dir[0] * half, m[1] - dir[1] * half], b: [m[0] + dir[0] * half, m[1] + dir[1] * half] }
+            }
+            (_, Curve::Line { .. }) => {
+                // A straight line on a surface of revolution runs along the
+                // axis at one u; take u from the midpoint, as a cone's tip has none.
+                let u = surface.uv_of(mid)[0];
+                let (a, b) = (surface.uv_of(curve.point_at(ts)), surface.uv_of(curve.point_at(te)));
+                UvCurve::Line { a: [u, a[1]], b: [u, b[1]] }
+            }
         }
     }
 }
@@ -944,35 +1243,33 @@ impl Brep {
     pub fn tessellate(&self) -> Vec<[Vec3; 3]> {
         let mut tris = Vec::new();
         for face in &self.faces {
-            let loops = self.face_uv_loops(face);
-            match face.surface {
-                Surface::Plane { normal, .. } => {
-                    let rings: Vec<Vec<Vec3>> = loops
-                        .iter()
-                        .map(|lp| lp.iter().flat_map(UvCurve::samples).map(|[u, v]| face.surface.point_at(u, v)).collect())
-                        .collect();
-                    tris.extend(triangulate_planar(&rings, if face.sense { normal } else { -normal }));
-                }
-                Surface::Cylinder { .. } => {
-                    // Builders make cylinder faces whose (u, v) domain is a
-                    // rectangle, so a grid of strips covers it.
-                    let corners = loops.iter().flatten().flat_map(|c| [c.start(), c.end()]);
-                    let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
-                    for p in corners {
-                        lo = [lo[0].min(p[0]), lo[1].min(p[1])];
-                        hi = [hi[0].max(p[0]), hi[1].max(p[1])];
-                    }
-                    let n = segments_for(hi[0] - lo[0]);
-                    let u = |i: usize| lo[0] + (hi[0] - lo[0]) * i as f64 / n as f64;
-                    for i in 0..n {
-                        let s = |u, v| face.surface.point_at(u, v);
-                        let q = [s(u(i), lo[1]), s(u(i + 1), lo[1]), s(u(i + 1), hi[1]), s(u(i), hi[1])];
-                        // Counter-clockwise in (u, v) faces along the surface normal.
-                        if face.sense {
-                            tris.extend([[q[0], q[1], q[2]], [q[0], q[2], q[3]]]);
-                        } else {
-                            tris.extend([[q[0], q[2], q[1]], [q[0], q[3], q[2]]]);
+            if let Surface::Plane { normal, .. } = face.surface {
+                let rings: Vec<Vec<Vec3>> = self
+                    .face_uv_loops(face)
+                    .iter()
+                    .map(|lp| lp.iter().flat_map(UvCurve::samples).map(|[u, v]| face.surface.point_at(u, v)).collect())
+                    .collect();
+                tris.extend(triangulate_planar(&rings, if face.sense { normal } else { -normal }));
+                continue;
+            }
+            // Curved faces: a grid over their (u, v) rectangle. Only spheres
+            // and tori curve along v.
+            let [[u0, v0], [u1, v1]] = self.face_rect(face);
+            let nu = segments_for(u1 - u0);
+            let nv = if matches!(face.surface, Surface::Sphere { .. } | Surface::Torus { .. }) { segments_for(v1 - v0) } else { 1 };
+            let s = |i: usize, j: usize| {
+                face.surface.point_at(u0 + (u1 - u0) * i as f64 / nu as f64, v0 + (v1 - v0) * j as f64 / nv as f64)
+            };
+            for i in 0..nu {
+                for j in 0..nv {
+                    let q = [s(i, j), s(i + 1, j), s(i + 1, j + 1), s(i, j + 1)];
+                    for t in [[q[0], q[1], q[2]], [q[0], q[2], q[3]]] {
+                        // Skip the slivers that collapse at a pole or a cone's tip.
+                        if (t[1] - t[0]).cross(t[2] - t[0]).length() <= TOLERANCE {
+                            continue;
                         }
+                        // Counter-clockwise in (u, v) faces along the surface normal.
+                        tris.push(if face.sense { t } else { [t[0], t[2], t[1]] });
                     }
                 }
             }
@@ -980,48 +1277,139 @@ impl Brep {
         tris
     }
 
-    /// (area, volume contribution) of one face, exact for its curves.
-    ///
-    /// Volume uses the divergence theorem, V = ⅓ ∮ p·n dA over the boundary.
-    /// Both integrals over the face are turned into integrals round its
-    /// (u, v) loops by Green's theorem, so a hole's loop, which runs the other
-    /// way, subtracts itself.
-    fn face_area_volume(&self, face: &Face) -> (f64, f64) {
-        let loops = self.face_uv_loops(face);
-        let curves = loops.iter().flatten();
-        match face.surface {
-            Surface::Plane { origin, normal } => {
-                // p·n is the same everywhere on a plane: origin·n.
-                let a: f64 = curves.map(UvCurve::area_term).sum();
-                (a.abs(), origin.dot(normal) * a / 3.0)
+    /// A curved face's (u, v) rectangle: `uv_rect`, or the bounds of its loops.
+    fn face_rect(&self, face: &Face) -> [[f64; 2]; 2] {
+        face.uv_rect.unwrap_or_else(|| {
+            let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+            for p in self.face_uv_loops(face).iter().flatten().flat_map(|c| [c.start(), c.end()]) {
+                lo = [lo[0].min(p[0]), lo[1].min(p[1])];
+                hi = [hi[0].max(p[0]), hi[1].max(p[1])];
             }
-            Surface::Cylinder { origin: o, axis, ref_dir: x, radius: r } => {
-                // dA = r du dv and p·n = o·(cos u x + sin u y) + r, so with
-                // G(u) = ∫ p·n du, the face integral is ∮ G(u) dv; H = ∫ G du.
-                let y = axis.cross(x);
-                let g = |u: f64| o.dot(x * u.sin() - y * u.cos()) + r * u;
-                let h = |u: f64| -o.dot(x * u.cos() + y * u.sin()) + r * u * u / 2.0;
-                let (mut area, mut flux) = (0.0, 0.0);
-                for c in curves {
-                    // Cylinder curves are straight in (u, v).
-                    let ([u0, v0], [u1, v1]) = (c.start(), c.end());
-                    let dv = v1 - v0;
-                    area += 0.5 * (u0 + u1) * dv;
-                    flux += if (u1 - u0).abs() < TOLERANCE { g(u0) * dv } else { dv / (u1 - u0) * (h(u1) - h(u0)) };
-                }
-                (r * area.abs(), r * flux / 3.0)
-            }
-        }
+            [lo, hi]
+        })
     }
 
-    /// Enclosed volume, exact for planes and cylinders.
+    /// (area, volume contribution) of one face.
+    ///
+    /// Volume uses the divergence theorem, V = ⅓ ∬ p·n dA over the boundary.
+    /// On a plane p·n is constant, and Green's theorem turns the area into an
+    /// integral round the (u, v) loops, so a hole's loop, which runs the
+    /// other way, subtracts itself.
+    ///
+    /// On a surface of revolution, with N = ∂S/∂u × ∂S/∂v = ρ (h′·r̂ − ρ′·a),
+    /// p·N = ρ h′ (o·r̂(u) + ρ) − ρ ρ′ (o·a + h), where r̂(u) is the radial
+    /// direction. The u part integrates in closed form; the v part
+    /// (`revolution_integrals`) by Gauss–Legendre, exact for cylinders and
+    /// cones and to rounding for spheres and tori.
+    fn face_area_volume(&self, face: &Face) -> (f64, f64) {
+        let Some((o, a, x)) = face.surface.revolution() else {
+            let Surface::Plane { origin, normal } = face.surface else { unreachable!() };
+            let area: f64 = self.face_uv_loops(face).iter().flatten().map(UvCurve::area_term).sum();
+            return (area.abs(), origin.dot(normal) * area / 3.0);
+        };
+        let y = a.cross(x);
+        // ∫ o·r̂(u) du
+        let s = |u: f64| o.dot(x * u.sin() - y * u.cos());
+        let q = |va: f64, vb: f64| revolution_integrals(&face.surface, o.dot(a), va, vb);
+        if let Some([[u0, v0], [u1, v1]]) = face.uv_rect {
+            let [q1, q2, q3] = q(v0, v1);
+            let flux = (s(u1) - s(u0)) * q1 + (u1 - u0) * q2;
+            // N points out of the solid exactly when the face's sense is true.
+            let sign = if face.sense { 1.0 } else { -1.0 };
+            return (((u1 - u0) * q3).abs(), sign * flux / 3.0);
+        }
+        // A trimmed face: Green's theorem round its loops, which run along
+        // u = const (meridians) or v = const (parallels, which add nothing).
+        // Loops run counter-clockwise in (u, v) exactly when N points out of
+        // the solid, so the sign takes care of itself.
+        let (mut area, mut flux) = (0.0, 0.0);
+        for c in self.face_uv_loops(face).iter().flatten() {
+            let ([ua, va], [ub, vb]) = (c.start(), c.end());
+            let u = (ua + ub) / 2.0; // exact for meridians, where ua == ub
+            let [q1, q2, q3] = q(va, vb);
+            flux += s(u) * q1 + u * q2;
+            area += u * q3;
+        }
+        (area.abs(), flux / 3.0)
+    }
+
+    /// Enclosed volume: exact for planes, cylinders and cones, to rounding
+    /// for spheres and tori.
     pub fn volume(&self) -> f64 {
         self.faces.iter().map(|f| self.face_area_volume(f).1).sum()
     }
 
-    /// Total face area, exact for planes and cylinders.
+    /// Total face area, to the same accuracy as `volume`.
     pub fn surface_area(&self) -> f64 {
         self.faces.iter().map(|f| self.face_area_volume(f).0).sum()
+    }
+
+    /// Exact axis-aligned bounding box (lo, hi), or None if there are no
+    /// vertices. Covers vertices, the bulge of circle edges and the bulge of
+    /// whole turns of surfaces of revolution (a sphere's equator is on no
+    /// edge). A partial turn is covered by sampling its surface.
+    pub fn bounding_box(&self) -> Option<(Vec3, Vec3)> {
+        let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+        let mut add = |k: usize, value: f64| {
+            lo[k] = lo[k].min(value);
+            hi[k] = hi[k].max(value);
+        };
+        let c = |p: Vec3, k: usize| [p.x, p.y, p.z][k];
+        for v in &self.vertices {
+            for k in 0..3 {
+                add(k, c(v.point, k));
+            }
+        }
+        for (i, e) in self.edges.iter().enumerate() {
+            if let Curve::Circle { axis, ref_dir, .. } = e.curve {
+                // Coordinate k of a circle is extreme where tan t = y_k / x_k.
+                let ((t0, t1), y) = (self.edge_range(EdgeId(i)), axis.cross(ref_dir));
+                for k in 0..3 {
+                    for t in angles_in(c(y, k).atan2(c(ref_dir, k)), t0, t1) {
+                        add(k, c(e.curve.point_at(t), k));
+                    }
+                }
+            }
+        }
+        for face in &self.faces {
+            let Some((o, a, _)) = face.surface.revolution() else { continue };
+            let [[u0, v0], [u1, v1]] = self.face_rect(face);
+            if u1 - u0 < TAU - 1e-9 {
+                for p in self.tessellate_face_grid(face) {
+                    for k in 0..3 {
+                        add(k, c(p, k));
+                    }
+                }
+                continue;
+            }
+            for k in 0..3 {
+                // Over a full turn, coordinate k spans o_k + h·a_k ± ρ·w with
+                // w = √(1 − a_k²). For a sphere or torus these are
+                // A·cos v + B·sin v plus constants: extreme where tan v = ±a_k / w.
+                let (ak, w) = (c(a, k), (1.0 - c(a, k).powi(2)).max(0.0).sqrt());
+                let mut vs = vec![v0, v1];
+                if matches!(face.surface, Surface::Sphere { .. } | Surface::Torus { .. }) {
+                    vs.extend(angles_in(ak.atan2(w), v0, v1));
+                    vs.extend(angles_in((-ak).atan2(w), v0, v1));
+                }
+                for v in vs {
+                    let (rho, _, h, _) = face.surface.profile(v);
+                    add(k, c(o, k) + h * ak + rho * w);
+                    add(k, c(o, k) + h * ak - rho * w);
+                }
+            }
+        }
+        (lo[0] <= hi[0]).then(|| (Vec3::new(lo[0], lo[1], lo[2]), Vec3::new(hi[0], hi[1], hi[2])))
+    }
+
+    /// Grid points of a curved face, for bounding a partial turn.
+    fn tessellate_face_grid(&self, face: &Face) -> Vec<Vec3> {
+        let [[u0, v0], [u1, v1]] = self.face_rect(face);
+        let (nu, nv) = (segments_for(u1 - u0), segments_for(v1 - v0).max(4));
+        (0..=nu)
+            .flat_map(|i| (0..=nv).map(move |j| (i, j)))
+            .map(|(i, j)| face.surface.point_at(u0 + (u1 - u0) * i as f64 / nu as f64, v0 + (v1 - v0) * j as f64 / nv as f64))
+            .collect()
     }
 
     /// ASCII STL export of the tessellation.
@@ -1453,6 +1841,124 @@ mod tests {
         let raised = Ring::Circle { center: Vec3::new(0.0, 0.0, 1.0), radius: 0.5 };
         let tilted = Profile { outer: Ring::Polygon(square(0.0, 0.0, 2.0)), holes: vec![raised] };
         assert_eq!(tilted.validate(), Err(ProfileError::NotFlat));
+    }
+
+    const PI: f64 = std::f64::consts::PI;
+
+    /// Volume of a revolved (r, z) polygon by Pappus: 2π ∬ r dA = 2π ∮ r²/2 dz,
+    /// exact for straight edges. Independent of how `revolve` builds faces.
+    fn pappus_volume(p: &[[f64; 2]]) -> f64 {
+        let n = p.len();
+        let s: f64 = (0..n)
+            .map(|i| {
+                let ([r0, z0], [r1, z1]) = (p[i], p[(i + 1) % n]);
+                (z1 - z0) * (r0 * r0 + r0 * r1 + r1 * r1) / 6.0
+            })
+            .sum();
+        2.0 * PI * s.abs()
+    }
+
+    #[test]
+    fn revolved_rectangle_is_a_cylinder() {
+        let (r, h) = (2.0, 3.0);
+        let b = Brep::revolve(&[[0.0, 0.0], [r, 0.0], [r, h], [0.0, h]]);
+        assert_eq!(b.counts(), (2, 3, 3), "same topology as make_cylinder");
+        assert_eq!(b.validate(), Ok(()));
+        assert!(approx(b.volume(), PI * r * r * h));
+        assert!(approx(b.surface_area(), 2.0 * PI * r * h + 2.0 * PI * r * r));
+    }
+
+    #[test]
+    fn revolved_triangle_is_a_cone_with_its_tip_on_the_axis() {
+        let (r, h) = (3.0, 4.0);
+        let b = Brep::revolve(&[[0.0, 0.0], [r, 0.0], [0.0, h]]);
+        // Base circle's vertex + tip; base circle + seam; base disc + cone.
+        assert_eq!(b.counts(), (2, 2, 2));
+        assert_eq!(b.validate(), Ok(()));
+        assert_eq!(b.genus(), Some(0));
+        assert!(approx(b.volume(), PI * r * r * h / 3.0), "{}", b.volume());
+        assert!(approx(b.surface_area(), PI * r * r + PI * r * (r * r + h * h).sqrt()));
+    }
+
+    #[test]
+    fn revolved_profiles_match_pappus() {
+        let cases: [&[[f64; 2]]; 5] = [
+            // Frustum, either way round.
+            &[[0.0, 0.0], [3.0, 0.0], [1.5, 2.0], [0.0, 2.0]],
+            &[[0.0, 2.0], [1.5, 2.0], [3.0, 0.0], [0.0, 0.0]],
+            // Tube (genus 1): its inner wall faces the axis.
+            &[[1.0, 0.0], [3.0, 0.0], [3.0, 2.0], [1.0, 2.0]],
+            // Tube with a cone flaring inwards, and a cone tip on top.
+            &[[1.0, 0.0], [3.0, 0.0], [3.0, 2.0], [1.5, 2.5], [1.0, 1.0]],
+            &[[0.0, -1.0], [2.0, -1.0], [2.0, 1.0], [1.0, 1.0], [0.0, 3.0]],
+        ];
+        for p in cases {
+            let b = Brep::revolve(p);
+            assert_eq!(b.validate(), Ok(()), "{p:?}");
+            // NVIDIA's validator accepts only semi-angles in (0, π/2) (BA_515).
+            for f in &b.faces {
+                if let Surface::Cone { semi_angle, .. } = f.surface {
+                    assert!(semi_angle > 0.0 && semi_angle < FRAC_PI_2, "{p:?}: {semi_angle}");
+                }
+            }
+            let expected_genus = if p.iter().any(|q| q[0] == 0.0) { 0 } else { 1 };
+            assert_eq!(b.genus(), Some(expected_genus), "{p:?}");
+            assert!(approx(b.volume(), pappus_volume(p)), "{p:?}: {} vs {}", b.volume(), pappus_volume(p));
+            let (area, vol) = mesh_area_volume(&b);
+            assert!(approx_rel(area, b.surface_area(), 0.003) && approx_rel(vol, b.volume(), 0.003), "{p:?}");
+        }
+    }
+
+    #[test]
+    fn sphere_matches_smlib_topology_and_exact_values() {
+        let r = 2.0;
+        let b = Brep::make_sphere(Vec3::new(1.0, -1.0, 0.5), r);
+        // Two poles, one seam, one face: 2 − 1 + 1 = 2.
+        assert_eq!(b.counts(), (2, 1, 1));
+        assert_eq!(b.validate(), Ok(()));
+        assert_eq!(b.genus(), Some(0));
+        assert!(approx(b.volume(), 4.0 / 3.0 * PI * r.powi(3)), "{}", b.volume());
+        assert!(approx(b.surface_area(), 4.0 * PI * r * r));
+        let (area, vol) = mesh_area_volume(&b);
+        assert!(approx_rel(area, b.surface_area(), 0.003) && approx_rel(vol, b.volume(), 0.005));
+    }
+
+    #[test]
+    fn torus_matches_smlib_topology_and_exact_values() {
+        let (big, r) = (5.0, 1.5);
+        let b = Brep::make_torus(Vec3::new(0.0, 2.0, -1.0), big, r);
+        // One vertex, two closed seams, one face: 1 − 2 + 1 = 0, genus 1.
+        assert_eq!(b.counts(), (1, 2, 1));
+        assert_eq!(b.validate(), Ok(()));
+        assert_eq!(b.genus(), Some(1));
+        assert!(approx(b.volume(), 2.0 * PI * PI * big * r * r), "{}", b.volume());
+        assert!(approx(b.surface_area(), 4.0 * PI * PI * big * r));
+        let (area, vol) = mesh_area_volume(&b);
+        assert!(approx_rel(area, b.surface_area(), 0.003) && approx_rel(vol, b.volume(), 0.005));
+    }
+
+    #[test]
+    fn bounding_boxes_reach_the_bulges() {
+        let close = |a: Vec3, b: Vec3| (a - b).length() < 1e-9;
+        let (lo, hi) = Brep::make_sphere(Vec3::new(1.0, 2.0, 3.0), 2.0).bounding_box().unwrap();
+        assert!(close(lo, Vec3::new(-1.0, 0.0, 1.0)) && close(hi, Vec3::new(3.0, 4.0, 5.0)), "{lo:?} {hi:?}");
+        let (lo, hi) = Brep::make_torus(Vec3::new(0.0, 0.0, 0.0), 5.0, 1.0).bounding_box().unwrap();
+        assert!(close(lo, Vec3::new(-6.0, -6.0, -1.0)) && close(hi, Vec3::new(6.0, 6.0, 1.0)), "{lo:?} {hi:?}");
+        let (lo, hi) = Brep::make_cylinder(Vec3::new(0.0, 0.0, 0.0), 1.0, 2.0).bounding_box().unwrap();
+        assert!(close(lo, Vec3::new(-1.0, -1.0, 0.0)) && close(hi, Vec3::new(1.0, 1.0, 2.0)), "{lo:?} {hi:?}");
+    }
+
+    #[test]
+    fn revolve_profile_check_rejects_bad_profiles() {
+        let check = |p: &[[f64; 2]]| check_revolve_profile(p);
+        assert_eq!(check(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]), Ok(()));
+        assert_eq!(check(&[[-1.0, 0.0], [1.0, 0.0], [0.0, 1.0]]), Err(ProfileError::CrossesAxis));
+        // A diamond touching the axis at one corner would pinch to a point.
+        assert_eq!(check(&[[0.0, 0.0], [1.0, -1.0], [2.0, 0.0], [1.0, 1.0]]), Err(ProfileError::TouchesAxisAtPoints));
+        // A C shape meeting the axis twice would enclose a hollow.
+        let c_shape = [[0.0, 0.0], [2.0, 0.0], [2.0, 3.0], [0.0, 3.0], [0.0, 2.0], [1.0, 2.0], [1.0, 1.0], [0.0, 1.0]];
+        assert_eq!(check(&c_shape), Err(ProfileError::TouchesAxisAtPoints));
+        assert_eq!(check(&[[1.0, 0.0], [2.0, 0.0], [3.0, 0.0]]), Err(ProfileError::Degenerate { ring: 0 }));
     }
 
     #[test]

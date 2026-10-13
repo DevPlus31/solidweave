@@ -5,7 +5,7 @@ native support for NVIDIA's OpenUSD B-rep (BrepArray) format.
 
 | Crate | What it is |
 |---|---|
-| `mini_brep` | B-rep kernel: planes, cylinders, lines, circles, through-holes, exact volume and area, validation. No dependencies. |
+| `mini_brep` | B-rep kernel: planes, cylinders, cones, spheres, tori; extrude and revolve; through-holes; exact volume and area; validation. No dependencies. |
 | `node_graph` | Grasshopper-style dataflow graph. Every edit goes through one command API, which is also the AI's interface. No dependencies. |
 | `usd_brep` | Reads, writes and validates BrepArray `.usda` files. No dependencies. |
 | `cad_app` | Desktop editor (egui): node canvas plus live 3D preview. |

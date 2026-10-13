@@ -9,7 +9,7 @@ with no C++ or OpenUSD dependency.
 | `usda` | Reads the USDA text format (prims, metadata, variants, relationships, dictionaries) and keeps what B-rep work needs |
 | `model` | The `omniSolid` schema as Rust types: all topology arrays, all 12 geometry APIs, typed tokens, per-Brep ranges |
 | `validate` | Structural checks ported from NVIDIA's `brep_validator.py`, using the same `BA_xxx` codes and tolerances |
-| `convert` | Export `mini_brep` solids to BrepArray (exact planes, cylinders, lines and circles), and import planar BrepArrays back |
+| `convert` | Export `mini_brep` solids to BrepArray (exact planes, cylinders, cones, spheres, tori, lines and circles), and import planar BrepArrays back |
 
 ## Usage
 

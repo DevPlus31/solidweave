@@ -37,6 +37,11 @@ fn main() {
             },
             6.0,
         )),
+        ("Cone", Brep::revolve(&[[0.0, 0.0], [10.0, 0.0], [0.0, 25.0]])),
+        ("Sphere", Brep::make_sphere(Vec3::new(0.0, 0.0, 0.0), 10.0)),
+        ("Torus", Brep::make_torus(Vec3::new(0.0, 0.0, 0.0), 20.0, 5.0)),
+        // A turned part: shaft, chamfered collar and a bored hole (genus 1).
+        ("TurnedPart", Brep::revolve(&[[4.0, 0.0], [12.0, 0.0], [12.0, 6.0], [10.0, 8.0], [7.0, 8.0], [7.0, 30.0], [4.0, 30.0]])),
     ];
     println!("Export");
     for (name, solid) in &solids {

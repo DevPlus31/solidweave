@@ -34,9 +34,16 @@ The desktop editor: `cargo run -p cad_app`.
 
 ### mini_brep (~1,100 lines with tests, no dependencies)
 A small B-rep kernel.
-- Geometry: `Vec3`, `Curve::{Line, Circle}`, `Surface::{Plane, Cylinder}`, with
-  the BrepArray schema's own parameterisations (cylinder: u = angle, v =
-  height, normal away from the axis).
+- Geometry: `Vec3`, `Curve::{Line, Circle}`,
+  `Surface::{Plane, Cylinder, Cone, Sphere, Torus}`, with the BrepArray
+  schema's own parameterisations. All but the plane are surfaces of
+  revolution, S = origin + ρ(v)·r̂(u) + h(v)·axis; `Surface::profile(v)` gives
+  ρ, ρ′, h, h′, and one code path serves them all. Normals point away from the
+  axis (torus: from the tube's centre line).
+- `Face::uv_rect`: a face that is its surface's whole (u, v) rectangle (full
+  turns, spheres, tori). Its loops only list its edges, since a sphere's
+  poles leave the loop open in (u, v); it is exported `rectangular`, as SMLib
+  does.
 - Topology: Vertex → Edge → CoEdge → Loop → Face → Shell, stored in flat arenas
   with typed ids. No `Rc<RefCell>`. `Face::sense` says whether the surface
   normal points out of the solid (false for a round hole's wall).
@@ -49,7 +56,14 @@ A small B-rep kernel.
   inside the outline and apart (touching counts as overlap), since a misplaced
   hole still gives valid topology.
 - Builders: `extrude(&Profile, h)`; `make_box`, `make_cylinder`,
-  `extrude_polygon`, `extrude_profile` build on it. Low level: `add_vertex`, `add_edge`,
+  `extrude_polygon`, `extrude_profile` build on it. `revolve(&[[r, z]])` spins
+  a polygon round Z into discs/rings, cylinders and cones (tips on the axis
+  allowed; `check_revolve_profile` rejects crossing the axis, pinches and
+  enclosed hollows). `make_sphere` and `make_torus` copy SMLib's topology
+  (sphere: 2 poles, 1 half-circle seam; torus: 1 vertex, 2 closed seams).
+  Cones always point their axis to the wide end, keeping semiAngle in
+  (0, π/2): NVIDIA's validator demands that (BA_515) though its schema
+  allows (−π/2, π/2). Low level: `add_vertex`, `add_edge`,
   `add_face`, `add_shell`.
 - `face_uv_loops()` gives each face's trim loops in (u, v) ("pcurves"); u jumps
   a full turn across a seam so loops close. Mass properties, tessellation and
@@ -59,18 +73,23 @@ A small B-rep kernel.
   Euler–Poincaré per shell, V − E + F − H = 2 − 2·genus (even and ≤ 2).
   `genus()` / `shell_genus()` report it. Euler cannot tell a real through-hole
   from a defect with the same counts.
-- `volume()` and `surface_area()` are exact for planes and cylinders (Green's
-  theorem round the (u, v) loops). `tessellate()` ear-clips planar faces
-  (holes bridged) and grids cylinders at 64 segments per turn; `to_stl()`.
-- Limit: cylinder faces must have a rectangular (u, v) domain (what `extrude`
-  makes); lines on them must run along the axis and circles round it.
+- `volume()` and `surface_area()`: divergence theorem. Planes via Green's
+  theorem round their (u, v) loops; surfaces of revolution in closed form in
+  u and 8-point Gauss–Legendre in v: exact for cylinders and cones, to
+  rounding for spheres and tori. `bounding_box()` is exact (reaches a
+  sphere's equator, on no edge). `tessellate()` ear-clips planar faces and
+  grids curved ones at 64 segments per turn; `to_stl()`.
+- Limit: trimmed curved faces (no `uv_rect`) must be bounded by meridians and
+  parallels, which is all the builders make.
 
 ### node_graph (~600 lines)
 A Grasshopper-style dataflow engine on top of mini_brep.
 - Every port carries a list. Nodes define `solve` for one item, and the engine
   applies longest-list matching. List nodes override `solve_lists`.
 - Nodes: Slider, Series, MassAdd, Rectangle, Polygon, Circle, Move,
-  Difference, Extrude, Volume, UsdExport. Profiles travel as
+  Difference, Extrude, Revolve, Sphere, Volume, UsdExport. Revolve spins a
+  profile drawn in XY (x = distance from the axis, y = height) round Z; a
+  circle clear of the axis gives a torus. Profiles travel as
   `Value::Profile` (outline plus holes). `Difference` cuts the whole holes
   list out of each outline and validates the result, so a hole off the
   plate fails there, at the node that caused it.
@@ -116,6 +135,7 @@ Verified against NVIDIA's repository:
 | `Cube.usda` imported | volume 1 |
 
 | Exports loaded into NVIDIA's SMLib kernel (`smlib_import.py`) | 11 / 11 Breps in 7 files are manifold solids, incl. cylinder seams and round holes; volume within 6.8e-9 of exact (SMLib's own integration error), 2026-10-13 |
+| Revolved shapes (cone with tip, sphere, torus, turned part) | NVIDIA's validator 9 / 9 demo files pass; SMLib loads all 9 as manifold solids, volumes within 1.7e-8 of exact, 2026-10-13 |
 
 NVIDIA's Python validator is structural: its own `coverage_limits` files with
 broken cylinder seams pass it ("Seam validity needs the kernel"). SMLib does
@@ -171,7 +191,8 @@ Reproduce with `usd_brep/tools/compare_with_nvidia/run.sh <usd-brep checkout>`
    SMLib through FFI later).
 3. Done: mini_brep holes, genus in the Euler check, `Circle` and `Cylinder`;
    profiles with holes and circles in node_graph (`Kernel::extrude` takes a
-   `Profile`). Still to do: import of curved BrepArrays in `to_mini_brep`.
+   `Profile`); revolve, cones, spheres, tori. Still to do: import of curved
+   BrepArrays in `to_mini_brep`; revolving less than a full turn.
 4. node_graph: a parser from text back to a graph, so the AI can write whole
    definitions.
 5. LLM tool calling over the graph command API, with a validation feedback loop.

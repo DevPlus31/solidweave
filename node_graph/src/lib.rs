@@ -243,6 +243,57 @@ mod tests {
         assert!(g.error(cut).is_none() && g.error(ext).is_none());
     }
 
+    fn solid_volume(g: &Graph, id: NodeId) -> f64 {
+        g.output(id, 0)[0].as_solid().unwrap().volume()
+    }
+
+    #[test]
+    fn revolve_turns_profiles_into_tubes_cones_and_tori() {
+        let pi = std::f64::consts::PI;
+        let mut g = Graph::new();
+        // A 2 x 3 rectangle moved 1 off the axis: a tube, inner radius 1, outer 3.
+        let rect = g.add_node(Box::new(Rectangle));
+        let (w, h) = (g.add_node(slider(2.0, 0.1, 10.0)), g.add_node(slider(3.0, 0.1, 10.0)));
+        g.connect(w, 0, rect, 0).unwrap();
+        g.connect(h, 0, rect, 1).unwrap();
+        let moved = g.add_node(Box::new(Move));
+        let dx = g.add_node(slider(1.0, -5.0, 5.0));
+        g.connect(rect, 0, moved, 0).unwrap();
+        g.connect(dx, 0, moved, 1).unwrap();
+        let tube = g.add_node(Box::new(Revolve));
+        g.connect(moved, 0, tube, 0).unwrap();
+        // A circle of radius 1 at x = 4: a torus.
+        let ring = g.add_node(Box::new(Circle));
+        let cx = g.add_node(slider(4.0, -10.0, 10.0));
+        g.connect(cx, 0, ring, 0).unwrap();
+        let torus = g.add_node(Box::new(Revolve));
+        g.connect(ring, 0, torus, 0).unwrap();
+        g.evaluate();
+        assert!((solid_volume(&g, tube) - pi * (9.0 - 1.0) * 3.0).abs() < 1e-9);
+        assert!((solid_volume(&g, torus) - 2.0 * pi * pi * 4.0).abs() < 1e-9);
+        // Moving the rectangle across the axis is refused at the Revolve node.
+        g.set_number(dx, -1.0).unwrap();
+        g.evaluate();
+        assert!(g.error(tube).unwrap().contains("crosses the axis"), "{:?}", g.error(tube));
+        // As is a circle that touches the axis.
+        g.set_number(cx, 0.5).unwrap();
+        g.evaluate();
+        assert!(g.error(torus).unwrap().contains("clear of the axis"), "{:?}", g.error(torus));
+    }
+
+    #[test]
+    fn sphere_node_builds_exact_spheres() {
+        let mut g = Graph::new();
+        let s = g.add_node(Box::new(Sphere));
+        let r = g.add_node(slider(2.0, 0.0, 10.0));
+        g.connect(r, 0, s, 3).unwrap();
+        g.evaluate();
+        assert!((solid_volume(&g, s) - 4.0 / 3.0 * std::f64::consts::PI * 8.0).abs() < 1e-9);
+        g.set_number(r, 0.0).unwrap();
+        g.evaluate();
+        assert!(g.error(s).unwrap().contains("positive"));
+    }
+
     #[test]
     fn output_of_an_unevaluated_or_removed_node_is_empty() {
         let mut g = Graph::new();

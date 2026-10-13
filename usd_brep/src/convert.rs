@@ -160,21 +160,61 @@ pub fn from_mini_brep(solid: &Brep, name: &str, opts: &ExportOptions) -> BrepArr
                 b.cylinders.ref_direction.push(v3(ref_dir));
                 b.cylinders.radius.push(radius);
             }
-        }
-        b.face_trim_type.push(TrimType::General);
-        b.face_loop_count.push(1 + face.holes.len() as u32);
-
-        let uv_loops = solid.face_uv_loops(face);
-        let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
-        for p in uv_loops.iter().flatten().flat_map(uv_bounding_points) {
-            for a in 0..2 {
-                lo[a] = lo[a].min(p[a]);
-                hi[a] = hi[a].max(p[a]);
+            Surface::Cone { origin, axis, ref_dir, radius, semi_angle } => {
+                b.face_surface_type.push(SurfaceType::Cone);
+                b.cones.origin.push(v3(origin));
+                b.cones.axis.push(v3(axis));
+                b.cones.ref_direction.push(v3(ref_dir));
+                b.cones.radius.push(radius);
+                b.cones.semi_angle.push(semi_angle);
+            }
+            Surface::Sphere { center, axis, ref_dir, radius } => {
+                b.face_surface_type.push(SurfaceType::Sphere);
+                b.spheres.center.push(v3(center));
+                b.spheres.axis.push(v3(axis));
+                b.spheres.ref_direction.push(v3(ref_dir));
+                b.spheres.radius.push(radius);
+            }
+            Surface::Torus { origin, axis, ref_dir, major_radius, minor_radius } => {
+                b.face_surface_type.push(SurfaceType::Torus);
+                b.tori.origin.push(v3(origin));
+                b.tori.axis.push(v3(axis));
+                b.tori.ref_direction.push(v3(ref_dir));
+                b.tori.major_radius.push(major_radius);
+                b.tori.minor_radius.push(minor_radius);
             }
         }
-        b.face_range.extend([lo, hi]);
+        b.face_loop_count.push(1 + face.holes.len() as u32);
 
-        for (lp, uv) in std::iter::once(&face.outer).chain(&face.holes).zip(uv_loops) {
+        // A face covering its whole (u, v) rectangle is written as SMLib
+        // writes spheres and tori: trimType rectangular, the rectangle as its
+        // range, and no UV curves (a sphere's poles would leave its loop open).
+        let uv_loops = match face.uv_rect {
+            Some(rect) => {
+                b.face_trim_type.push(TrimType::Rectangular);
+                b.face_range.extend(rect);
+                None
+            }
+            None => {
+                b.face_trim_type.push(TrimType::General);
+                let loops = solid.face_uv_loops(face);
+                let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+                for p in loops.iter().flatten().flat_map(uv_bounding_points) {
+                    for a in 0..2 {
+                        lo[a] = lo[a].min(p[a]);
+                        hi[a] = hi[a].max(p[a]);
+                    }
+                }
+                b.face_range.extend([lo, hi]);
+                Some(loops)
+            }
+        };
+
+        for (k, lp) in std::iter::once(&face.outer).chain(&face.holes).enumerate() {
+            let uv: Vec<Option<UvCurve>> = match &uv_loops {
+                Some(loops) => loops[k].iter().copied().map(Some).collect(),
+                None => vec![None; lp.coedges.len()],
+            };
             let mut uses: Vec<_> = lp.coedges.iter().copied().zip(uv).collect();
             // Loops are stored round the surface normal; ours run round the
             // outward normal, so reverse them where the two differ.
@@ -182,7 +222,7 @@ pub fn from_mini_brep(solid: &Brep, name: &str, opts: &ExportOptions) -> BrepArr
                 uses.reverse();
                 for (ce, c) in &mut uses {
                     ce.forward = !ce.forward;
-                    *c = c.reversed();
+                    *c = c.map(|c| c.reversed());
                 }
             }
             b.loop_edgeuse_count.push(uses.len() as u32);
@@ -200,8 +240,17 @@ pub fn from_mini_brep(solid: &Brep, name: &str, opts: &ExportOptions) -> BrepArr
                 }
                 b.edgeuse_next_radial.push(0); // filled below
                 if opts.uv_curves {
-                    let (t0, t1) = solid.edge_range(ce.edge);
-                    push_uv_curve(&mut b.uv_curves, &c, t1 - t0);
+                    match c {
+                        Some(c) => {
+                            let (t0, t1) = solid.edge_range(ce.edge);
+                            push_uv_curve(&mut b.uv_curves, &c, t1 - t0);
+                        }
+                        // The schema's "no UV curve" record.
+                        None => {
+                            b.uv_curves.order.push(0);
+                            b.uv_curves.vertex_count.push(0);
+                        }
+                    }
                 }
             }
         }
@@ -215,25 +264,11 @@ pub fn from_mini_brep(solid: &Brep, name: &str, opts: &ExportOptions) -> BrepArr
         }
     }
 
-    // Extent: vertices plus the extremes of every circle, then tolerance.
-    let mut pts = b.vertex_points.clone();
-    for (i, e) in solid.edges.iter().enumerate() {
-        if let Curve::Circle { axis, ref_dir, .. } = e.curve {
-            let (t0, t1) = solid.edge_range(EdgeId(i));
-            let y = axis.cross(ref_dir);
-            for k in 0..3 {
-                let (xk, yk) = (v3(ref_dir)[k], v3(y)[k]);
-                pts.extend(extreme_angles(t0, t1, xk, yk).map(|t| v3(e.curve.point_at(t))));
-            }
-        }
-    }
-    let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
-    for p in &pts {
-        for a in 0..3 {
-            lo[a] = lo[a].min(p[a]);
-            hi[a] = hi[a].max(p[a]);
-        }
-    }
+    // Extent: the exact bounding box (which reaches a sphere's equator, on
+    // no edge), then tolerance.
+    let zero = Vec3::new(0.0, 0.0, 0.0);
+    let (lo, hi) = solid.bounding_box().unwrap_or((zero, zero));
+    let (mut lo, mut hi) = (v3(lo), v3(hi));
     let diag = (0..3).map(|a| (hi[a] - lo[a]).powi(2)).sum::<f64>().sqrt();
     let tol = 1e-6 * diag.max(1.0);
     for a in 0..3 {
@@ -470,6 +505,34 @@ mod tests {
         assert_eq!(b.faceuse_orientation[6], Orientation::Opposite);
         assert_eq!(b.faceuse_orientation[7 + 6], Orientation::Same);
         assert_eq!(b.face_loop_count.iter().filter(|&&c| c == 2).count(), 2, "both caps carry the hole");
+    }
+
+    #[test]
+    fn revolved_shapes_export_cone_sphere_and_torus_faces() {
+        for (name, solid, surface) in [
+            ("Cone", Brep::revolve(&[[0.0, 0.0], [3.0, 0.0], [0.0, 4.0]]), SurfaceType::Cone),
+            ("Sphere", Brep::make_sphere(Vec3::new(1.0, 2.0, 3.0), 2.0), SurfaceType::Sphere),
+            ("Torus", Brep::make_torus(Vec3::new(0.0, 0.0, 0.0), 5.0, 1.0), SurfaceType::Torus),
+            ("Tube", Brep::revolve(&[[1.0, 0.0], [3.0, 0.0], [3.0, 2.0], [1.5, 2.5], [1.0, 1.0]]), SurfaceType::Cone),
+        ] {
+            let b = written_and_read_back(&solid, name);
+            let issues = validate(&b);
+            assert!(issues.is_empty(), "{name}: {issues:#?}");
+            assert!(b.face_surface_type.contains(&surface), "{name}");
+            // Curved faces are whole (u, v) rectangles, written as SMLib does.
+            for (f, t) in b.face_surface_type.iter().enumerate() {
+                let expected = if *t == SurfaceType::Plane { TrimType::General } else { TrimType::Rectangular };
+                assert_eq!(b.face_trim_type[f], expected, "{name} face {f}");
+            }
+        }
+    }
+
+    #[test]
+    fn sphere_extent_reaches_its_equator() {
+        // The equator is on no edge: only the bounding box knows it is there.
+        let b = written_and_read_back(&Brep::make_sphere(Vec3::new(0.0, 0.0, 0.0), 2.0), "S");
+        assert!(b.extent[0][1] <= -2.0 && b.extent[1][1] >= 2.0, "{:?}", b.extent);
+        assert!(b.extent[1][1] < 2.0 + 1e-4, "and stays tight: {:?}", b.extent);
     }
 
     #[test]

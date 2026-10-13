@@ -252,6 +252,31 @@ impl NodeType for Extrude {
     }
 }
 
+pub struct Revolve;
+impl NodeType for Revolve {
+    fn name(&self) -> &'static str { "Revolve" }
+    fn description(&self) -> &'static str {
+        "Spins a profile a full turn round the Z axis: x is the distance from the axis, y the height. A polygon gives discs, cylinders and cones; a circle clear of the axis gives a torus."
+    }
+    fn inputs(&self) -> Vec<Port> { vec![port("profile", Kind::Profile)] }
+    fn outputs(&self) -> Vec<Port> { vec![port("S", Kind::Solid)] }
+    fn solve(&self, kernel: &dyn Kernel, i: &[Value]) -> Result<Vec<Value>, String> {
+        Ok(vec![Value::Solid(kernel.revolve(i[0].as_profile()?)?)])
+    }
+}
+
+pub struct Sphere;
+impl NodeType for Sphere {
+    fn name(&self) -> &'static str { "Sphere" }
+    fn description(&self) -> &'static str { "Sphere of `radius` centred at (x, y, z), poles on the Z axis." }
+    fn inputs(&self) -> Vec<Port> { vec![num("x", 0.0), num("y", 0.0), num("z", 0.0), num("radius", 1.0)] }
+    fn outputs(&self) -> Vec<Port> { vec![port("S", Kind::Solid)] }
+    fn solve(&self, kernel: &dyn Kernel, i: &[Value]) -> Result<Vec<Value>, String> {
+        let center = Vec3::new(i[0].as_number()?, i[1].as_number()?, i[2].as_number()?);
+        Ok(vec![Value::Solid(kernel.sphere(center, i[3].as_number()?)?)])
+    }
+}
+
 pub struct Volume;
 impl NodeType for Volume {
     fn name(&self) -> &'static str { "Volume" }
@@ -302,8 +327,10 @@ impl NodeType for UsdExport {
 }
 
 /// Every node type's name, in menu order.
-pub const NODE_NAMES: [&str; 11] =
-    ["Slider", "Series", "MassAdd", "Rectangle", "Polygon", "Circle", "Move", "Difference", "Extrude", "Volume", "UsdExport"];
+pub const NODE_NAMES: [&str; 13] = [
+    "Slider", "Series", "MassAdd", "Rectangle", "Polygon", "Circle", "Move", "Difference", "Extrude", "Revolve", "Sphere",
+    "Volume", "UsdExport",
+];
 
 /// Registry: a new node of the type called `name` (as `NodeType::name`
 /// spells it). This is how a UI menu or an AI creates nodes.
@@ -318,6 +345,8 @@ pub fn create(name: &str) -> Option<Box<dyn NodeType>> {
         "Move" => Box::new(Move),
         "Difference" => Box::new(Difference),
         "Extrude" => Box::new(Extrude),
+        "Revolve" => Box::new(Revolve),
+        "Sphere" => Box::new(Sphere),
         "Volume" => Box::new(Volume),
         "UsdExport" => Box::new(UsdExport),
         _ => return None,

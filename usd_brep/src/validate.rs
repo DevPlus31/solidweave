@@ -7,6 +7,11 @@
 //!
 //! Like the Python tool, this is a data-sanity layer: passing it does not
 //! prove the geometry is a valid solid (that needs a kernel).
+//!
+//! Derived from NVIDIA's `brep_validator.py`, Copyright (c) 2020-2026 NVIDIA
+//! CORPORATION & AFFILIATES, Apache License 2.0. Changes: reimplemented in
+//! Rust (not a line-by-line translation), reading data parsed by this crate
+//! instead of OpenUSD, and with the extra `RS_xxx` warnings. See /NOTICE.
 
 // `!(x > 0.0)` is deliberate: it also rejects NaN, which `x <= 0.0` would accept.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]

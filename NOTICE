@@ -1,0 +1,43 @@
+Rust CAD with AI
+================
+
+This project is original work. It is not affiliated with or endorsed by
+NVIDIA Corporation. NVIDIA and Omniverse are trademarks of NVIDIA
+Corporation.
+
+It is compatible with, and partly derived from, NVIDIA's usd-brep project:
+
+    https://github.com/NVIDIA-Omniverse/usd-brep
+    Copyright (c) 2020-2026 NVIDIA CORPORATION & AFFILIATES.
+    Licensed under the Apache License, Version 2.0:
+    https://www.apache.org/licenses/LICENSE-2.0
+
+What comes from usd-brep, and how it was changed:
+
+* usd_brep/src/model.rs, usd_brep/src/usda.rs
+  Implement NVIDIA's omniSolid BrepArray schema
+  (source/schema/omniSolid/resources/schema.usda). Written in Rust from the
+  schema; no NVIDIA code is included.
+
+* usd_brep/src/validate.rs
+  Derived from tools/brep_validator (brep_validator.py): the same checks,
+  BA_xxx codes and tolerances. Reimplemented in Rust, not translated line by
+  line; extra RS_xxx warnings added.
+
+* usd_brep/src/convert.rs
+  Export conventions (faceuse sides, loop direction, radial entry, seams and
+  closed edges) follow source/OCCT_BREP_IMPORT/src/OcctStagingDriver.cpp,
+  source/BREP_STAGING/src/BrepTopologyBuilder.cpp and the sample
+  TestFiles/brep_validator/Cone_SmConnect_Brep.usda. No NVIDIA code is
+  included.
+
+* usd_brep/tests/fixtures/*.usda
+  Unmodified copies of NVIDIA test files; see usd_brep/tests/fixtures/NOTICE.md.
+
+* usd_brep/tools/compare_with_nvidia/
+  Scripts that run NVIDIA's validator and SMLib kernel on our files. They
+  call NVIDIA's tools; they do not contain them.
+
+mini_brep, node_graph and cad_app contain no NVIDIA code. Where mini_brep
+shares conventions with the BrepArray schema (curve and surface
+parameterisations, closed edges, seams), it does so for compatibility.

@@ -87,7 +87,11 @@ different secondary errors that follow from it.
 * **Not tested against NVIDIA's C++ kernel (SMLib).** Building it needs NVIDIA's
   package server, which was not reachable from the build machine.
 
-## License
+## License and attribution
 
-Code in this crate: your choice. The files in `tests/fixtures/` are unmodified
-copies from NVIDIA's repository under Apache-2.0 (see `tests/fixtures/NOTICE.md`).
+Not affiliated with or endorsed by NVIDIA. The format is NVIDIA's BrepArray
+schema, implemented here in Rust. `validate.rs` is derived from NVIDIA's
+`brep_validator.py` (Apache-2.0) and reimplemented in Rust. The files in
+`tests/fixtures/` are unmodified copies from NVIDIA's repository under
+Apache-2.0 (see `tests/fixtures/NOTICE.md`). The project's `NOTICE` file
+lists exactly what comes from usd-brep and how it was changed.

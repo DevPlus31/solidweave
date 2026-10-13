@@ -8,7 +8,7 @@ if (Test-Path $out) { Remove-Item $out -Recurse -Force }
 New-Item -ItemType Directory $out | Out-Null
 
 # Top-level notes keep their names.
-foreach ($doc in '00_PROJECT_OVERVIEW.md', 'PROJECT_INSTRUCTIONS.md') {
+foreach ($doc in '00_PROJECT_OVERVIEW.md', 'PROJECT_INSTRUCTIONS.md', 'README.md', 'NOTICE') {
     Copy-Item (Join-Path $root $doc) $out
 }
 
@@ -22,4 +22,4 @@ foreach ($crate in 'cad_app', 'mini_brep', 'node_graph', 'usd_brep') {
             $count++
         }
 }
-Write-Output "Wrote $count source files plus 2 notes to $out"
+Write-Output "Wrote $count source files plus 4 notes to $out"

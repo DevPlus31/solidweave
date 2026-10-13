@@ -8,7 +8,7 @@ with no C++ or OpenUSD dependency.
 |---|---|
 | `usda` | Reads the USDA text format (prims, metadata, variants, relationships, dictionaries) and keeps what B-rep work needs |
 | `model` | The `omniSolid` schema as Rust types: all topology arrays, all 12 geometry APIs, typed tokens, per-Brep ranges |
-| `validate` | Structural checks ported from NVIDIA's `brep_validator.py`, using the same `BA_xxx` codes and tolerances |
+| `validate` | Structural checks modelled on NVIDIA's `brep_validator.py` and reimplemented in Rust, with the same `BA_xxx` codes and tolerances |
 | `convert` | Export `mini_brep` solids to BrepArray (exact planes, cylinders, cones, spheres, tori, lines and circles), and import planar BrepArrays back |
 
 ## Usage
@@ -40,8 +40,9 @@ cargo run --example validate_files -- *.usda
 
 ## How it was checked
 
-All results come from NVIDIA's own repository and tools
-(`tools/compare_with_nvidia/run.sh` reproduces them):
+All results come from NVIDIA's own repository and tools, 2026-10-13. The
+first four rows are reproduced by `tools/compare_with_nvidia/run.sh`; the
+SMLib rows need a built SMLib (`smlib_import.py`, `brep_geometry_validator.exe`).
 
 | Check | Result |
 |---|---|
@@ -49,8 +50,9 @@ All results come from NVIDIA's own repository and tools
 | Read → write → read gives identical data | 130 / 130 (the 2 others are deliberately unreadable test files) |
 | Same pass/fail verdict as `brep_validator.py` | 132 / 132 files |
 | Reports the defect each `Test_BA_xxx` file was built to trigger | 107 / 107 |
-| Exported `mini_brep` solids pass NVIDIA's validator | 5 / 5 (box, L-bracket, hexagonal prism, cylinder, plate with a round and a square hole) |
-| Exported solids load into NVIDIA's SMLib kernel as manifold solids | 11 / 11, volumes within 6.8e-9 of exact |
+| `demo` exports pass NVIDIA's validator | 11 / 11 (box, L-bracket, hex prism, cylinder, plate with holes, cone, sphere, torus, turned part, machined block, diamond cut) |
+| Exports load into NVIDIA's SMLib kernel as manifold solids | 11 / 11, volumes within 1.7e-8 of exact |
+| SMLib's full geometry checks (`AssertValid`, level 2, no healing) | 11 / 11, 0 checks failed |
 | NVIDIA's `Cube.usda` imports into `mini_brep` | V8 E12 F6, volume 1, area 6 |
 
 The two validators list exactly the same codes on 86 of the 132 files. On the
@@ -70,10 +72,17 @@ different secondary errors that follow from it.
   (`face_surface_slots()`, `edge_curve_slots()`).
 * **NURBS surface control points** are stored `u` major: `index = u * vCount + v`.
 * **Export conventions** match NVIDIA's OpenCASCADE importer
-  (`OcctStagingDriver.cpp`, `BrepTopologyBuilder.cpp`):
-  * Face normals point outward, so the void shell uses each face's `same` side.
-  * Outer loops run counter-clockwise around the normal.
+  (`OcctStagingDriver.cpp`, `BrepTopologyBuilder.cpp`) and SMLib's own exports:
+  * The void shell uses a face's `same` side when the surface normal points
+    out of the solid, `opposite` when it points in (a round hole's wall).
+  * Loops run counter-clockwise around the surface normal, holes clockwise.
   * An edgeuse with orientation `same` gets `bottomEntry`, and `opposite` gets `topEntry`.
+  * A full circle is one edge from a vertex back to itself; a closed surface
+    is cut open by a seam edge its face uses twice.
+  * A face covering its whole (u, v) rectangle (full turn, sphere, torus) is
+    written `rectangular`, with no UV curves.
+  * Cone semiAngle is kept in (0, π/2): NVIDIA's validator requires that
+    (BA_515), although the schema allows (−π/2, π/2).
 
 ## Limitations
 
@@ -85,11 +94,11 @@ different secondary errors that follow from it.
 * **`to_mini_brep` handles planar, single-solid, manifold models only.** Curved
   faces, internal voids and non-manifold models return
   `ImportError::Unsupported`.
-* **Checked against NVIDIA's C++ kernel (SMLib) from Python only.**
-  `tools/compare_with_nvidia/smlib_import.py` loads exported files into a built
-  SMLib: all 11 sample solids (box, L-bracket, hex prism, cylinder, plate with
-  holes, graph-built drilled plate, tower) load as manifold solids, with volumes
-  within 6.8e-9 of exact (2026-10-13). Rust does not call SMLib yet.
+* **`from_mini_brep` writes one solid region with one shell.** A solid with
+  several shells (separate pieces, or a hollow inside) is not exported
+  correctly yet.
+* **SMLib is used from Python only**, as a reference to check against; Rust
+  does not call it.
 
 ## License and attribution
 

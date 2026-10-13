@@ -5,10 +5,13 @@ native support for NVIDIA's OpenUSD B-rep (BrepArray) format.
 
 | Crate | What it is |
 |---|---|
-| `mini_brep` | B-rep kernel: planes, cylinders, cones, spheres, tori; extrude, revolve, and booleans of planar solids; through-holes; exact volume and area; validation. No dependencies. |
-| `node_graph` | Grasshopper-style dataflow graph. Every edit goes through one command API, which is also the AI's interface. No dependencies. |
-| `usd_brep` | Reads, writes and validates BrepArray `.usda` files. No dependencies. |
+| `mini_brep` | B-rep kernel: planes, cylinders, cones, spheres, tori; extrude, revolve, and booleans of planar solids; through-holes; exact volume and area; validation. |
+| `node_graph` | Grasshopper-style dataflow graph. Every edit goes through one command API, which is also the AI's interface. |
+| `usd_brep` | Reads, writes and validates BrepArray `.usda` files. |
 | `cad_app` | Desktop editor (egui): node canvas plus live 3D preview. |
+
+Only `cad_app` has external dependencies (eframe/egui, egui-snarl); the
+other three use the standard library alone.
 
 ```
 cargo test --workspace
@@ -29,9 +32,11 @@ endorsed by NVIDIA.
 - **Validator:** modelled on NVIDIA's `brep_validator.py` (same checks and
   `BA_xxx` codes), reimplemented in Rust. It agrees with NVIDIA's validator on
   132 of 132 of NVIDIA's sample files.
-- **Kernel, graph and editor:** our own designs. Exports load into NVIDIA's
-  SMLib kernel as valid solids with matching volumes (11 of 11 sample
-  solids), which is how we check correctness. No SMLib code is included.
+- **Kernel, graph and editor:** our own designs. Our exported solids load
+  into NVIDIA's SMLib kernel as valid solids with matching volumes and pass
+  SMLib's full geometry checks (17 of 17), and our booleans give the same
+  results as SMLib's (6 of 6). That is how we check correctness. No SMLib
+  code is included.
 
 Future features ported from NVIDIA's code follow one rule: their code is the
 specification and the reference to test against, and the Rust version is

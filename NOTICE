@@ -26,10 +26,11 @@ What comes from usd-brep, and how it was changed:
 
 * usd_brep/src/convert.rs
   Export conventions (faceuse sides, loop direction, radial entry, seams and
-  closed edges) follow source/OCCT_BREP_IMPORT/src/OcctStagingDriver.cpp,
-  source/BREP_STAGING/src/BrepTopologyBuilder.cpp and the sample
-  TestFiles/brep_validator/Cone_SmConnect_Brep.usda. No NVIDIA code is
-  included.
+  closed edges, rectangular trims) follow
+  source/OCCT_BREP_IMPORT/src/OcctStagingDriver.cpp,
+  source/BREP_STAGING/src/BrepTopologyBuilder.cpp, the sample
+  TestFiles/brep_validator/Cone_SmConnect_Brep.usda, and spheres and tori
+  exported by SMLib itself. No NVIDIA code is included.
 
 * usd_brep/tests/fixtures/*.usda
   Unmodified copies of NVIDIA test files; see usd_brep/tests/fixtures/NOTICE.md.
@@ -43,5 +44,6 @@ algorithm of csg.js by Evan Wallace (https://github.com/evanw/csg.js, MIT
 licence). No csg.js code is included.
 
 mini_brep, node_graph and cad_app contain no NVIDIA code. Where mini_brep
-shares conventions with the BrepArray schema (curve and surface
-parameterisations, closed edges, seams), it does so for compatibility.
+shares conventions with the BrepArray schema and SMLib (curve and surface
+parameterisations, closed edges, seams, the topology of spheres and tori), it
+does so for compatibility.

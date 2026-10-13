@@ -1,10 +1,10 @@
 # Rust CAD with AI
 
-A parametric 3D CAD system in Rust, designed to be driven by AI. Three crates:
-mini_brep (B-rep kernel), node_graph (Grasshopper-style dataflow engine) and
-usd_brep (NVIDIA OpenUSD BrepArray reader/writer/validator). Start from
-`00_PROJECT_OVERVIEW.md`, which records the architecture, verified results,
-BrepArray format facts and the roadmap.
+A parametric 3D CAD system in Rust, designed to be driven by AI. Four crates:
+mini_brep (B-rep kernel), node_graph (Grasshopper-style dataflow engine),
+usd_brep (NVIDIA OpenUSD BrepArray reader/writer/validator) and cad_app (egui
+editor). Start from `00_PROJECT_OVERVIEW.md`, which records the architecture,
+verified results, BrepArray format facts and the roadmap.
 
 ## Layout and commands
 
@@ -14,21 +14,42 @@ BrepArray format facts and the roadmap.
   dependency-free.
 - `cargo test --workspace` runs everything, including tests against NVIDIA's
   sample files in `usd_brep/tests/fixtures/` (Apache-2.0, see NOTICE.md).
-- Examples: `kernel_demo` (mini_brep), `graph_demo` (node_graph), `demo`
+- Examples: `kernel_demo` and `boolean_cases` (mini_brep), `graph_demo`
+  (node_graph), `demo`, `validate_files`, `read_files`, `roundtrip`
   (usd_brep). Example names must stay unique across the workspace, or their
   binaries overwrite each other in `target/`.
-- NVIDIA's Python validator: `usd_brep/tools/compare_with_nvidia/run.sh`.
-- NVIDIA's SMLib kernel, as a test oracle: a built checkout lives at
-  `C:\Users\Mustapha\nvb`. Check exports with
-  `python3 usd_brep/tools/compare_with_nvidia/smlib_import.py C:\Users\Mustapha\nvb FILE.usda…`
-  (Python 3.12), booleans with `smlib_boolean.py`, and full SMLib geometry
-  checks with `C:\Users\Mustapha\nvb\_build\windows-x86_64\release\brep_geometry_validator.exe --level 2 --no-healer FILE.usda…`
-  (put that folder and its `extraLibs` on PATH and set
-  `OMNISOLID_PLUGIN_PATH` to `nvb\_build\schema\omniSolid\resources`). To rebuild: in `repo.toml` set `msbuild.vs_version = "vs2022"`
-  (this machine has no v142 toolset), then `prebuild.bat` and `repo.bat build -r`.
-  The checkout must be at a short path: from a long one, cl.exe's `/MP` child
-  command lines pass 32k characters (errors C1083 '' and D8040), and `subst`
-  does not help because the build tool resolves real paths.
+
+## Checking against NVIDIA
+
+Tools in `usd_brep/tools/compare_with_nvidia/`. After any change to export or
+geometry, export with `cargo run -p usd_brep --example demo -- DIR` (and
+`graph_demo`) and run all three NVIDIA checks below.
+
+- **Python validator:** `run.sh <usd-brep checkout>` (bash) compares our
+  validator with NVIDIA's on their files; `validate_runner.py` checks single
+  files. Needs `pip install usd-core "usd-validation-nvidia>=1.22.0,<2"` and
+  `OMNISOLID_PLUGIN_PATH` set to the checkout's
+  `source/schema/omniSolid/resources`.
+- **SMLib kernel**, a built checkout at `C:\Users\Mustapha\nvb` (2.7 GB),
+  with Python 3.12:
+  - `python3 smlib_import.py C:\Users\Mustapha\nvb FILE.usda…`: loads files
+    into SMLib; manifold, volume, area.
+  - `cargo run -q -p mini_brep --example boolean_cases > cases.json`, then
+    `python3 smlib_boolean.py C:\Users\Mustapha\nvb cases.json`: our booleans
+    vs SMLib's.
+  - `nvb\_build\windows-x86_64\release\brep_geometry_validator.exe --level 2
+    --no-healer FILE.usda…`: SMLib's full geometry checks. Put that folder
+    and its `extraLibs` on PATH and set `OMNISOLID_PLUGIN_PATH` to
+    `nvb\_build\schema\omniSolid\resources`.
+  - Rebuilding: in `repo.toml` set `msbuild.vs_version = "vs2022"` (this
+    machine has no v142 toolset), then `prebuild.bat` and `repo.bat build -r`.
+    The checkout must be at a short path: from a long one, cl.exe's `/MP`
+    child command lines pass 32k characters (errors C1083 '' and D8040), and
+    `subst` does not help because the build tool resolves real paths.
+- If `OMNISOLID_PLUGIN_PATH` is set wrongly, SMLib imports fail with
+  SM_ERR (1001) for every file; unset it and the scripts set it themselves.
+
+## Other files
 - `PROJECT_INSTRUCTIONS.md` holds the same working rules as instruction text
   for a claude.ai Project.
 

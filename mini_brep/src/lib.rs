@@ -1,9 +1,12 @@
 //! mini_brep — a small, dependency-free Boundary Representation (B-rep) in Rust.
 //!
 //! Structure:
-//!   Geometry : Point (Vec3), Curve (Line, Circle), Surface (Plane, Cylinder)
+//!   Geometry : Point (Vec3), Curve (Line, Circle),
+//!              Surface (Plane, Cylinder, Cone, Sphere, Torus)
 //!   Topology : Solid → Shell → Face → Loop → CoEdge → Edge → Vertex
 //!   Faces may have holes; solids may have through-holes (genus > 0).
+//!   Building : extrude (profiles with holes), revolve, sphere, torus, and
+//!              booleans of planar solids (`boolean.rs`).
 //!
 //! Curves and surfaces use the parameterisations of NVIDIA's OpenUSD
 //! BrepArray schema, so exporting needs no conversion. Closed surfaces follow

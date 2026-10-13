@@ -6,6 +6,11 @@ node graph weaves profiles, extrusions, revolutions and booleans into solids;
 every edit goes through one command API that a person, a script or an AI can
 use.
 
+![Solidweave editor: a node graph on the left builds a machined block (a slot cut through it, a rib joined on); the 3D preview is on the right and the graph's text form, which an AI reads, at the bottom](docs/screenshot.png)
+
+*The machined-block example: sliders drive two rectangles extruded into a
+block and a slot cutter, a boolean difference, and a union with a rib.*
+
 | Crate | What it is |
 |---|---|
 | `mini_brep` | B-rep kernel: planes, cylinders, cones, spheres, tori; extrude, revolve, and booleans of planar solids; through-holes; exact volume and area; validation. |

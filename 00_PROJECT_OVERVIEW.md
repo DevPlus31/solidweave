@@ -149,6 +149,7 @@ Verified against NVIDIA's repository:
 | Revolved shapes (cone with tip, sphere, torus, turned part) | NVIDIA's validator 9 / 9 demo files pass; SMLib loads all 9 as manifold solids, volumes within 1.7e-8 of exact, 2026-10-13 |
 | Booleans vs SMLib's own booleans (`smlib_boolean.py`) | 6 / 6 box cases (overlap union/difference/intersection, shared-face union, flush pocket, through-hole): same volume to 2e-16 and identical V/E/F counts, 2026-10-13 |
 | Boolean-built parts exported | Machined block and diamond cut pass NVIDIA's validator; SMLib loads both as manifold solids with exact volumes |
+| NVIDIA's `brep_geometry_validator.exe --level 2 --no-healer` (SMLib `AssertValid`) | 13 / 13 export files, 17 / 17 solids, 0 checks failed (it does fail NVIDIA's broken `coverage_limits` cylinders: 7 checks each), 2026-10-13 |
 
 NVIDIA's Python validator is structural: its own `coverage_limits` files with
 broken cylinder seams pass it ("Seam validity needs the kernel"). SMLib does

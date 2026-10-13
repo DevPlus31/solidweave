@@ -21,7 +21,10 @@ BrepArray format facts and the roadmap.
 - NVIDIA's SMLib kernel, as a test oracle: a built checkout lives at
   `C:\Users\Mustapha\nvb`. Check exports with
   `python3 usd_brep/tools/compare_with_nvidia/smlib_import.py C:\Users\Mustapha\nvb FILE.usda…`
-  (Python 3.12). To rebuild: in `repo.toml` set `msbuild.vs_version = "vs2022"`
+  (Python 3.12), booleans with `smlib_boolean.py`, and full SMLib geometry
+  checks with `C:\Users\Mustapha\nvb\_build\windows-x86_64\release\brep_geometry_validator.exe --level 2 --no-healer FILE.usda…`
+  (put that folder and its `extraLibs` on PATH and set
+  `OMNISOLID_PLUGIN_PATH` to `nvb\_build\schema\omniSolid\resources`). To rebuild: in `repo.toml` set `msbuild.vs_version = "vs2022"`
   (this machine has no v142 toolset), then `prebuild.bat` and `repo.bat build -r`.
   The checkout must be at a short path: from a long one, cl.exe's `/MP` child
   command lines pass 32k characters (errors C1083 '' and D8040), and `subst`

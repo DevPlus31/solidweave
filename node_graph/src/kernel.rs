@@ -5,7 +5,7 @@
 //! default backend is mini_brep; SMLib through FFI can be added later as one
 //! more implementation without touching the nodes.
 
-use mini_brep::{Brep, Profile};
+use mini_brep::{Brep, Profile, Vec3};
 use std::fmt;
 use std::rc::Rc;
 use usd_brep::BrepArray;
@@ -19,6 +19,8 @@ pub trait Solid: fmt::Debug {
     fn counts(&self) -> (usize, usize, usize);
     /// The solid as a one-Brep BrepArray prim: the kernel-neutral exchange form.
     fn to_brep_array(&self, name: &str) -> BrepArray;
+    /// Triangles for display, wound counter-clockwise seen from outside.
+    fn tessellate(&self) -> Vec<[Vec3; 3]>;
 }
 
 /// Builds solids. Every solid it returns has already passed its validity checks.
@@ -50,5 +52,8 @@ impl Solid for Brep {
     fn counts(&self) -> (usize, usize, usize) { Brep::counts(self) }
     fn to_brep_array(&self, name: &str) -> BrepArray {
         from_mini_brep(self, name, &ExportOptions::default())
+    }
+    fn tessellate(&self) -> Vec<[Vec3; 3]> {
+        Brep::tessellate(self)
     }
 }

@@ -1,0 +1,11 @@
+[package]
+name = "cad_app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mini_brep = { path = "../mini_brep" }
+node_graph = { path = "../node_graph" }
+eframe = "0.36"
+egui = "0.36"
+egui-snarl = "0.12"

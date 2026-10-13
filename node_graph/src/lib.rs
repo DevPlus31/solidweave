@@ -10,7 +10,7 @@ pub mod kernel;
 pub mod nodes;
 pub mod value;
 
-pub use graph::{Graph, NodeId};
+pub use graph::{Graph, NodeId, Wire};
 pub use kernel::{Kernel, MiniBrep, Solid};
 pub use nodes::*;
 pub use value::{Data, Kind, Value};
@@ -24,7 +24,7 @@ pub fn slider(value: f64, min: f64, max: f64) -> Box<NumberSlider> {
 mod tests {
     use super::*;
 
-    fn numbers(d: &Data) -> Vec<f64> {
+    fn numbers(d: &[Value]) -> Vec<f64> {
         d.iter().map(|v| v.as_number().unwrap()).collect()
     }
 
@@ -241,6 +241,36 @@ mod tests {
         g.set_number(n, 2.0).unwrap();
         g.evaluate();
         assert!(g.error(cut).is_none() && g.error(ext).is_none());
+    }
+
+    #[test]
+    fn output_of_an_unevaluated_or_removed_node_is_empty() {
+        let mut g = Graph::new();
+        let rect = g.add_node(Box::new(Rectangle));
+        assert!(g.output(rect, 0).is_empty(), "not evaluated yet");
+        g.evaluate();
+        assert_eq!(g.output(rect, 0).len(), 1);
+        assert!(g.output(rect, 7).is_empty(), "no such port");
+        g.remove_node(rect).unwrap();
+        assert!(g.output(rect, 0).is_empty());
+    }
+
+    #[test]
+    fn registry_creates_every_listed_node_by_name() {
+        for name in NODE_NAMES {
+            assert_eq!(create(name).map(|n| n.name()), Some(name));
+        }
+        assert!(create("Teleport").is_none());
+        assert_eq!(library().len(), NODE_NAMES.len());
+    }
+
+    #[test]
+    fn graph_lists_nodes_wires_and_slider_settings() {
+        let (g, [w, _, rect, ..]) = tower();
+        assert_eq!(g.node_ids().len(), 9);
+        assert!(g.wires().iter().any(|wire| wire.from == w && wire.to == rect && wire.in_port == 0));
+        assert_eq!(g.node_type(w).unwrap().number_setting(), Some((2.0, 0.0..=10.0)));
+        assert_eq!(g.node_type(rect).unwrap().number_setting(), None);
     }
 
     #[test]

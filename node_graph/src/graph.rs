@@ -6,7 +6,7 @@
 
 use crate::kernel::{Kernel, MiniBrep};
 use crate::nodes::NodeType;
-use crate::value::Data;
+use crate::value::{Data, Value};
 use std::collections::{HashSet, VecDeque};
 use std::fmt::Write as _;
 
@@ -171,12 +171,29 @@ impl Graph {
         }
     }
 
-    pub fn output(&self, id: NodeId, port: usize) -> &Data {
-        &self.nodes[id.0].as_ref().expect("removed node").outputs[port]
+    /// A node's output list; empty for a node not evaluated yet, a removed
+    /// node or a missing port.
+    pub fn output(&self, id: NodeId, port: usize) -> &[Value] {
+        self.nodes.get(id.0).and_then(Option::as_ref).and_then(|n| n.outputs.get(port)).map_or(&[], Vec::as_slice)
     }
 
     pub fn error(&self, id: NodeId) -> Option<&str> {
         self.nodes[id.0].as_ref()?.error.as_deref()
+    }
+
+    // ─────────────────────────── Reading ───────────────────────────
+
+    /// Live nodes in id order.
+    pub fn node_ids(&self) -> Vec<NodeId> {
+        (0..self.nodes.len()).filter(|&i| self.nodes[i].is_some()).map(NodeId).collect()
+    }
+
+    pub fn node_type(&self, id: NodeId) -> Option<&dyn NodeType> {
+        Some(self.nodes.get(id.0)?.as_ref()?.ty.as_ref())
+    }
+
+    pub fn wires(&self) -> &[Wire] {
+        &self.wires
     }
 
     // ─────────────────── Text form (for AI / diff / save) ───────────────────

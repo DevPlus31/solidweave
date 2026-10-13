@@ -13,7 +13,7 @@ foreach ($doc in '00_PROJECT_OVERVIEW.md', 'PROJECT_INSTRUCTIONS.md') {
 }
 
 $count = 0
-foreach ($crate in 'mini_brep', 'node_graph', 'usd_brep') {
+foreach ($crate in 'cad_app', 'mini_brep', 'node_graph', 'usd_brep') {
     Get-ChildItem (Join-Path $root $crate) -Recurse -File |
         Where-Object { $_.FullName -notmatch '[\\/]target[\\/]' } |
         ForEach-Object {

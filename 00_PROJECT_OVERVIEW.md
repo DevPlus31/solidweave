@@ -11,12 +11,26 @@ The repository is a normal Cargo workspace (`mini_brep/`, `node_graph/`,
 `flat/` for a claude.ai Project knowledge base, where `usd_brep__src__model.rs`
 is `usd_brep/src/model.rs`.
 
-## The three crates
+## The crates
 
 ```
-node_graph  ──uses──►  mini_brep  ◄──converts──  usd_brep
-(visual program)       (B-rep kernel)            (NVIDIA BrepArray I/O)
+cad_app ──► node_graph  ──uses──►  mini_brep  ◄──converts──  usd_brep
+(egui UI)   (visual program)       (B-rep kernel)            (NVIDIA BrepArray I/O)
 ```
+
+### cad_app (egui 0.36 / eframe, egui-snarl 0.12)
+The desktop editor: `cargo run -p cad_app`.
+- Node canvas (egui-snarl) on the left. The `Graph` is the single source of
+  truth: every canvas gesture calls the command API, and an edit the graph
+  rejects (type mismatch, cycle) never appears; its reason shows in the
+  status bar. Sliders edit through `set_number`; right-click adds or removes
+  nodes from the registry (`node_graph::create`).
+- 3D preview in the middle: every solid on any node output, tessellated,
+  drawn with egui's painter (orbit camera, back-face culling, flat shading,
+  painter's-algorithm sort). Fine for thousands of triangles; a wgpu depth
+  buffer can replace it later.
+- The text form (what the AI reads) and status at the bottom.
+- Starts with a drilled plate driven by sliders.
 
 ### mini_brep (~1,100 lines with tests, no dependencies)
 A small B-rep kernel.
@@ -157,5 +171,7 @@ Reproduce with `usd_brep/tools/compare_with_nvidia/run.sh <usd-brep checkout>`
 4. node_graph: a parser from text back to a graph, so the AI can write whole
    definitions.
 5. LLM tool calling over the graph command API, with a validation feedback loop.
-6. A visual node canvas (`egui-snarl`) and a `wgpu` viewport.
+6. Started: `cad_app` with an egui-snarl node canvas and a painter-based 3D
+   preview. Still to do: undo/redo over the command API, save/load, a wgpu
+   viewport with a depth buffer, fitting the canvas view on start.
 7. Binary `.usdc` support in usd_brep, or conversion through `usdcat`.

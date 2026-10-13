@@ -42,6 +42,11 @@ pub trait NodeType {
     fn state(&self) -> Option<String> {
         None
     }
+    /// For parameter nodes: current value and allowed range, so a UI can
+    /// show a slider.
+    fn number_setting(&self) -> Option<(f64, std::ops::RangeInclusive<f64>)> {
+        None
+    }
 
     /// List-level solve. Override for nodes that consume or produce whole
     /// lists (e.g. Series). Default: longest-list matching over `solve`.
@@ -86,6 +91,9 @@ impl NodeType for NumberSlider {
     }
     fn state(&self) -> Option<String> {
         Some(format!("value={}, range={}..{}", self.value, self.min, self.max))
+    }
+    fn number_setting(&self) -> Option<(f64, std::ops::RangeInclusive<f64>)> {
+        Some((self.value, self.min..=self.max))
     }
 }
 
@@ -293,19 +301,30 @@ impl NodeType for UsdExport {
     }
 }
 
-/// Registry: name → constructor. This list is what an AI would be shown.
+/// Every node type's name, in menu order.
+pub const NODE_NAMES: [&str; 11] =
+    ["Slider", "Series", "MassAdd", "Rectangle", "Polygon", "Circle", "Move", "Difference", "Extrude", "Volume", "UsdExport"];
+
+/// Registry: a new node of the type called `name` (as `NodeType::name`
+/// spells it). This is how a UI menu or an AI creates nodes.
+pub fn create(name: &str) -> Option<Box<dyn NodeType>> {
+    Some(match name {
+        "Slider" => Box::new(NumberSlider { value: 1.0, min: 0.0, max: 10.0 }),
+        "Series" => Box::new(Series),
+        "MassAdd" => Box::new(MassAddition),
+        "Rectangle" => Box::new(Rectangle),
+        "Polygon" => Box::new(Polygon),
+        "Circle" => Box::new(Circle),
+        "Move" => Box::new(Move),
+        "Difference" => Box::new(Difference),
+        "Extrude" => Box::new(Extrude),
+        "Volume" => Box::new(Volume),
+        "UsdExport" => Box::new(UsdExport),
+        _ => return None,
+    })
+}
+
+/// One node of every type. This list is what an AI would be shown.
 pub fn library() -> Vec<Box<dyn NodeType>> {
-    vec![
-        Box::new(NumberSlider { value: 0.0, min: 0.0, max: 1.0 }),
-        Box::new(Series),
-        Box::new(MassAddition),
-        Box::new(Rectangle),
-        Box::new(Polygon),
-        Box::new(Circle),
-        Box::new(Move),
-        Box::new(Difference),
-        Box::new(Extrude),
-        Box::new(Volume),
-        Box::new(UsdExport),
-    ]
+    NODE_NAMES.iter().filter_map(|n| create(n)).collect()
 }

@@ -115,11 +115,13 @@ Verified against NVIDIA's repository:
 | Exported solids pass NVIDIA's validator | 5 / 5 (box, L-bracket, hex prism, cylinder, plate with a round and a square hole), 2026-10-13 |
 | `Cube.usda` imported | volume 1 |
 
-Not tested against NVIDIA's C++ kernel (SMLib): it could not be built here.
+| Exports loaded into NVIDIA's SMLib kernel (`smlib_import.py`) | 11 / 11 Breps in 7 files are manifold solids, incl. cylinder seams and round holes; volume within 6.8e-9 of exact (SMLib's own integration error), 2026-10-13 |
+
 NVIDIA's Python validator is structural: its own `coverage_limits` files with
-broken cylinder seams pass it ("Seam validity needs the kernel"). Seams and
-curved geometry are checked by mini_brep's `validate()`, closed UV loops and
-exact mass properties instead.
+broken cylinder seams pass it ("Seam validity needs the kernel"). SMLib does
+check seams and closed edges, and accepts ours. Note SMLib's `area()` and
+`volume()` are numerical: pass `relative_accuracy` (default 1e-3 for area); even
+then its area of its own cylinder is 1.2e-5 off, so compare areas loosely.
 
 Reproduce with `usd_brep/tools/compare_with_nvidia/run.sh <usd-brep checkout>`
 (needs `pip install usd-core "usd-validation-nvidia>=1.22.0,<2"`).
@@ -144,7 +146,9 @@ Reproduce with `usd_brep/tools/compare_with_nvidia/run.sh <usd-brep checkout>`
   is the SMLib kernel. Porting it wholesale was rejected. The plan is:
   1. Port the data layer to Rust. Done: this is usd_brep.
   2. Call the kernel through FFI over its 12k-line `SM_API` C-style wrapper,
-     behind a Rust `Kernel` trait.
+     behind a Rust `Kernel` trait. SMLib now builds here (Windows, VS 2022)
+     and is driven from Python (`usd_brep` bindings) as a test oracle; FFI
+     from Rust is not done.
   3. Later, reimplement modules one at a time. Not line by line: each module
      is designed from the start as idiomatic Rust, with the C++ used only as
      the specification and as a test oracle (same inputs, compare outputs).

@@ -18,6 +18,14 @@ BrepArray format facts and the roadmap.
   (usd_brep). Example names must stay unique across the workspace, or their
   binaries overwrite each other in `target/`.
 - NVIDIA's Python validator: `usd_brep/tools/compare_with_nvidia/run.sh`.
+- NVIDIA's SMLib kernel, as a test oracle: a built checkout lives at
+  `C:\Users\Mustapha\nvb`. Check exports with
+  `python3 usd_brep/tools/compare_with_nvidia/smlib_import.py C:\Users\Mustapha\nvb FILE.usda…`
+  (Python 3.12). To rebuild: in `repo.toml` set `msbuild.vs_version = "vs2022"`
+  (this machine has no v142 toolset), then `prebuild.bat` and `repo.bat build -r`.
+  The checkout must be at a short path: from a long one, cl.exe's `/MP` child
+  command lines pass 32k characters (errors C1083 '' and D8040), and `subst`
+  does not help because the build tool resolves real paths.
 - `./flatten.ps1` writes flat copies (`usd_brep__src__model.rs`) to `flat/` for
   uploading to the claude.ai Project. Edit the real files, never `flat/`.
 - `PROJECT_INSTRUCTIONS.md` is the claude.ai Project's instruction text; it

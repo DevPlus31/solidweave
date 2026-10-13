@@ -81,15 +81,26 @@ A small B-rep kernel.
   grids curved ones at 64 segments per turn; `to_stl()`.
 - Limit: trimmed curved faces (no `uv_rect`) must be bounded by meridians and
   parallels, which is all the builders make.
+- Booleans (`boolean.rs`): `a.boolean(&b, BooleanOp::{Union, Difference,
+  Intersection})` for solids with planar faces. Faces are cut into convex
+  polygons and clipped against BSP trees (csg.js's algorithm, reimplemented),
+  which resolves coplanar faces; the soup is rebuilt into a B-rep (weld,
+  close T-junctions, merge each plane's pieces into faces with holes, drop
+  vertices mid-edge, group shells) and validated. Results may be empty or
+  have several shells (pieces, inner hollows). Non-manifold results (solids
+  touching along an edge) are reported as errors. Curved inputs are refused.
+  Welding and T-junction search are O(n²): fine for parts, slow for meshes.
 
 ### node_graph (~600 lines)
 A Grasshopper-style dataflow engine on top of mini_brep.
 - Every port carries a list. Nodes define `solve` for one item, and the engine
   applies longest-list matching. List nodes override `solve_lists`.
 - Nodes: Slider, Series, MassAdd, Rectangle, Polygon, Circle, Move,
-  Difference, Extrude, Revolve, Sphere, Volume, UsdExport. Revolve spins a
-  profile drawn in XY (x = distance from the axis, y = height) round Z; a
-  circle clear of the axis gives a torus. Profiles travel as
+  Difference, Extrude, Revolve, Sphere, SolidUnion, SolidDifference,
+  SolidIntersection, Volume, UsdExport. Revolve spins a profile drawn in XY
+  (x = distance from the axis, y = height) round Z; a circle clear of the
+  axis gives a torus. The solid booleans refuse results with more than one
+  shell, since BrepArray export writes one shell so far. Profiles travel as
   `Value::Profile` (outline plus holes). `Difference` cuts the whole holes
   list out of each outline and validates the result, so a hole off the
   plate fails there, at the node that caused it.
@@ -136,6 +147,8 @@ Verified against NVIDIA's repository:
 
 | Exports loaded into NVIDIA's SMLib kernel (`smlib_import.py`) | 11 / 11 Breps in 7 files are manifold solids, incl. cylinder seams and round holes; volume within 6.8e-9 of exact (SMLib's own integration error), 2026-10-13 |
 | Revolved shapes (cone with tip, sphere, torus, turned part) | NVIDIA's validator 9 / 9 demo files pass; SMLib loads all 9 as manifold solids, volumes within 1.7e-8 of exact, 2026-10-13 |
+| Booleans vs SMLib's own booleans (`smlib_boolean.py`) | 6 / 6 box cases (overlap union/difference/intersection, shared-face union, flush pocket, through-hole): same volume to 2e-16 and identical V/E/F counts, 2026-10-13 |
+| Boolean-built parts exported | Machined block and diamond cut pass NVIDIA's validator; SMLib loads both as manifold solids with exact volumes |
 
 NVIDIA's Python validator is structural: its own `coverage_limits` files with
 broken cylinder seams pass it ("Seam validity needs the kernel"). SMLib does
@@ -191,8 +204,9 @@ Reproduce with `usd_brep/tools/compare_with_nvidia/run.sh <usd-brep checkout>`
    SMLib through FFI later).
 3. Done: mini_brep holes, genus in the Euler check, `Circle` and `Cylinder`;
    profiles with holes and circles in node_graph (`Kernel::extrude` takes a
-   `Profile`); revolve, cones, spheres, tori. Still to do: import of curved
-   BrepArrays in `to_mini_brep`; revolving less than a full turn.
+   `Profile`); revolve, cones, spheres, tori; booleans of planar solids.
+   Still to do: booleans with curved faces; multi-shell export; import of
+   curved BrepArrays in `to_mini_brep`; revolving less than a full turn.
 4. node_graph: a parser from text back to a graph, so the AI can write whole
    definitions.
 5. LLM tool calling over the graph command API, with a validation feedback loop.

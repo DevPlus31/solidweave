@@ -5,7 +5,7 @@
 //! The `description` strings double as documentation for an AI agent.
 //! Geometry comes only from the `Kernel` the graph passes in.
 
-use crate::kernel::Kernel;
+use crate::kernel::{BooleanOp, Kernel};
 use crate::value::{Data, Kind, Value};
 use mini_brep::{Profile, Ring, Vec3};
 use std::rc::Rc;
@@ -277,6 +277,30 @@ impl NodeType for Sphere {
     }
 }
 
+/// Solid union, difference or intersection, item by item (longest list).
+pub struct SolidBoolean(pub BooleanOp);
+impl NodeType for SolidBoolean {
+    fn name(&self) -> &'static str {
+        match self.0 {
+            BooleanOp::Union => "SolidUnion",
+            BooleanOp::Difference => "SolidDifference",
+            BooleanOp::Intersection => "SolidIntersection",
+        }
+    }
+    fn description(&self) -> &'static str {
+        match self.0 {
+            BooleanOp::Union => "A and B joined into one solid. Planar faces only for now.",
+            BooleanOp::Difference => "A with B cut away. Planar faces only for now.",
+            BooleanOp::Intersection => "The part A and B have in common. Planar faces only for now.",
+        }
+    }
+    fn inputs(&self) -> Vec<Port> { vec![port("A", Kind::Solid), port("B", Kind::Solid)] }
+    fn outputs(&self) -> Vec<Port> { vec![port("S", Kind::Solid)] }
+    fn solve(&self, kernel: &dyn Kernel, i: &[Value]) -> Result<Vec<Value>, String> {
+        Ok(vec![Value::Solid(kernel.boolean(i[0].as_solid()?, i[1].as_solid()?, self.0)?)])
+    }
+}
+
 pub struct Volume;
 impl NodeType for Volume {
     fn name(&self) -> &'static str { "Volume" }
@@ -327,9 +351,9 @@ impl NodeType for UsdExport {
 }
 
 /// Every node type's name, in menu order.
-pub const NODE_NAMES: [&str; 13] = [
+pub const NODE_NAMES: [&str; 16] = [
     "Slider", "Series", "MassAdd", "Rectangle", "Polygon", "Circle", "Move", "Difference", "Extrude", "Revolve", "Sphere",
-    "Volume", "UsdExport",
+    "SolidUnion", "SolidDifference", "SolidIntersection", "Volume", "UsdExport",
 ];
 
 /// Registry: a new node of the type called `name` (as `NodeType::name`
@@ -347,6 +371,9 @@ pub fn create(name: &str) -> Option<Box<dyn NodeType>> {
         "Extrude" => Box::new(Extrude),
         "Revolve" => Box::new(Revolve),
         "Sphere" => Box::new(Sphere),
+        "SolidUnion" => Box::new(SolidBoolean(BooleanOp::Union)),
+        "SolidDifference" => Box::new(SolidBoolean(BooleanOp::Difference)),
+        "SolidIntersection" => Box::new(SolidBoolean(BooleanOp::Intersection)),
         "Volume" => Box::new(Volume),
         "UsdExport" => Box::new(UsdExport),
         _ => return None,

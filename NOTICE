@@ -38,6 +38,10 @@ What comes from usd-brep, and how it was changed:
   Scripts that run NVIDIA's validator and SMLib kernel on our files. They
   call NVIDIA's tools; they do not contain them.
 
+mini_brep/src/boolean.rs reimplements in Rust the BSP-tree clipping
+algorithm of csg.js by Evan Wallace (https://github.com/evanw/csg.js, MIT
+licence). No csg.js code is included.
+
 mini_brep, node_graph and cad_app contain no NVIDIA code. Where mini_brep
 shares conventions with the BrepArray schema (curve and surface
 parameterisations, closed edges, seams), it does so for compatibility.

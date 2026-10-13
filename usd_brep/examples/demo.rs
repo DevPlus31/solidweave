@@ -4,10 +4,20 @@
 //!
 //! Usage: cargo run --example demo -- <output dir> [NVIDIA .usda files...]
 
-use mini_brep::{Brep, Profile, Ring, Vec3};
+use mini_brep::{BooleanOp, Brep, Profile, Ring, Vec3};
 use usd_brep::convert::{ExportOptions, from_mini_brep, to_mini_brep};
 use usd_brep::validate::{is_valid, validate};
 use usd_brep::BrepArray;
+
+/// A block with a flush pocket, a square through-hole and a boss on top,
+/// built by booleans.
+fn machined_block() -> Brep {
+    let cube = |x, y, z, dx, dy, dz| Brep::make_box(Vec3::new(x, y, z), dx, dy, dz);
+    let block = cube(0.0, 0.0, 0.0, 60.0, 40.0, 20.0);
+    let pocket = block.boolean(&cube(5.0, 5.0, 12.0, 20.0, 30.0, 8.0), BooleanOp::Difference).unwrap();
+    let hole = pocket.boolean(&cube(40.0, 15.0, -5.0, 10.0, 10.0, 30.0), BooleanOp::Difference).unwrap();
+    hole.boolean(&cube(32.0, 5.0, 20.0, 24.0, 6.0, 10.0), BooleanOp::Union).unwrap()
+}
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -42,6 +52,12 @@ fn main() {
         ("Torus", Brep::make_torus(Vec3::new(0.0, 0.0, 0.0), 20.0, 5.0)),
         // A turned part: shaft, chamfered collar and a bored hole (genus 1).
         ("TurnedPart", Brep::revolve(&[[4.0, 0.0], [12.0, 0.0], [12.0, 6.0], [10.0, 8.0], [7.0, 8.0], [7.0, 30.0], [4.0, 30.0]])),
+        ("MachinedBlock", machined_block()),
+        ("DiamondCut", {
+            let s = 20.0 * 2.0_f64.sqrt();
+            let diamond = Brep::extrude_polygon(&[p(0.0, -s), p(s, 0.0), p(0.0, s), p(-s, 0.0)], 30.0);
+            Brep::make_box(Vec3::new(-20.0, -20.0, 5.0), 40.0, 40.0, 20.0).boolean(&diamond, BooleanOp::Intersection).unwrap()
+        }),
     ];
     println!("Export");
     for (name, solid) in &solids {

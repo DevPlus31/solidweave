@@ -11,7 +11,7 @@ pub mod nodes;
 pub mod value;
 
 pub use graph::{Graph, NodeId, Wire};
-pub use kernel::{Kernel, MiniBrep, Solid};
+pub use kernel::{BooleanOp, Kernel, MiniBrep, Solid};
 pub use nodes::*;
 pub use value::{Data, Kind, Value};
 
@@ -279,6 +279,64 @@ mod tests {
         g.set_number(cx, 0.5).unwrap();
         g.evaluate();
         assert!(g.error(torus).unwrap().contains("clear of the axis"), "{:?}", g.error(torus));
+    }
+
+    /// Extruded rectangle w x d x h, moved by (x, y). Returns the Extrude node.
+    fn block(g: &mut Graph, [w, d, h, x, y]: [f64; 5]) -> NodeId {
+        let rect = g.add_node(Box::new(Rectangle));
+        let moved = g.add_node(Box::new(Move));
+        let ext = g.add_node(Box::new(Extrude));
+        for (value, to, port) in [(w, rect, 0), (d, rect, 1), (x, moved, 1), (y, moved, 2), (h, ext, 1)] {
+            let s = g.add_node(slider(value, -100.0, 100.0));
+            g.connect(s, 0, to, port).unwrap();
+        }
+        g.connect(rect, 0, moved, 0).unwrap();
+        g.connect(moved, 0, ext, 0).unwrap();
+        ext
+    }
+
+    fn boolean_node(g: &mut Graph, name: &str, a: NodeId, b: NodeId) -> NodeId {
+        let n = g.add_node(create(name).unwrap());
+        g.connect(a, 0, n, 0).unwrap();
+        g.connect(b, 0, n, 1).unwrap();
+        n
+    }
+
+    #[test]
+    fn solid_boolean_nodes() {
+        let mut g = Graph::new();
+        let plate = block(&mut g, [10.0, 4.0, 1.0, 0.0, 0.0]);
+        // A 2 x 2 x 3 cutter standing on the plate's bottom plane (coplanar).
+        let cutter = block(&mut g, [2.0, 2.0, 3.0, 4.0, 1.0]);
+        let cut = boolean_node(&mut g, "SolidDifference", plate, cutter);
+        let joined = boolean_node(&mut g, "SolidUnion", plate, cutter);
+        let common = boolean_node(&mut g, "SolidIntersection", plate, cutter);
+        g.evaluate();
+        assert!((solid_volume(&g, cut) - (40.0 - 4.0)).abs() < 1e-9, "{:?}", g.error(cut));
+        assert!((solid_volume(&g, joined) - (40.0 + 12.0 - 4.0)).abs() < 1e-9);
+        assert!((solid_volume(&g, common) - 4.0).abs() < 1e-9);
+        // The cut plate exports and passes the BrepArray checks.
+        let export = g.add_node(Box::new(UsdExport));
+        g.connect(cut, 0, export, 0).unwrap();
+        g.evaluate();
+        assert!(g.error(export).is_none(), "{:?}", g.error(export));
+    }
+
+    #[test]
+    fn solid_booleans_report_what_they_cannot_do() {
+        let mut g = Graph::new();
+        let plate = block(&mut g, [10.0, 4.0, 1.0, 0.0, 0.0]);
+        // A cutter wall across the whole plate splits it in two.
+        let wall = block(&mut g, [1.0, 6.0, 3.0, 4.0, -1.0]);
+        let split = boolean_node(&mut g, "SolidDifference", plate, wall);
+        // A cylinder is curved.
+        let cyl = g.add_node(Box::new(Extrude));
+        let disc = g.add_node(Box::new(Circle));
+        g.connect(disc, 0, cyl, 0).unwrap();
+        let curved = boolean_node(&mut g, "SolidUnion", plate, cyl);
+        g.evaluate();
+        assert!(g.error(split).unwrap().contains("2 shells"), "{:?}", g.error(split));
+        assert!(g.error(curved).unwrap().contains("planar"), "{:?}", g.error(curved));
     }
 
     #[test]

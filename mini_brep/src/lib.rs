@@ -14,6 +14,9 @@
 //! Topology lives in flat arenas (Vec) addressed by typed ids, which avoids
 //! Rc<RefCell<..>> graphs and keeps the structure easy to serialize and copy.
 
+mod boolean;
+pub use boolean::{BooleanError, BooleanOp};
+
 use std::collections::HashMap;
 use std::f64::consts::{FRAC_PI_2, TAU};
 use std::fmt::Write as _;
@@ -1114,7 +1117,7 @@ impl Brep {
 
 // ────────────────────────── Validation ──────────────────────────
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BrepError {
     OpenLoop { face: FaceId },
     EdgeUseCount { edge: EdgeId, uses: usize },
@@ -1241,36 +1244,38 @@ impl Brep {
     /// solid. Curved edges and faces are approximated with
     /// `SEGMENTS_PER_TURN` segments per full turn.
     pub fn tessellate(&self) -> Vec<[Vec3; 3]> {
+        self.faces.iter().flat_map(|f| self.tessellate_face(f)).collect()
+    }
+
+    /// The triangles of one face; see `tessellate`.
+    pub fn tessellate_face(&self, face: &Face) -> Vec<[Vec3; 3]> {
+        if let Surface::Plane { normal, .. } = face.surface {
+            let rings: Vec<Vec<Vec3>> = self
+                .face_uv_loops(face)
+                .iter()
+                .map(|lp| lp.iter().flat_map(UvCurve::samples).map(|[u, v]| face.surface.point_at(u, v)).collect())
+                .collect();
+            return triangulate_planar(&rings, if face.sense { normal } else { -normal });
+        }
+        // Curved faces: a grid over their (u, v) rectangle. Only spheres and
+        // tori curve along v.
+        let [[u0, v0], [u1, v1]] = self.face_rect(face);
+        let nu = segments_for(u1 - u0);
+        let nv = if matches!(face.surface, Surface::Sphere { .. } | Surface::Torus { .. }) { segments_for(v1 - v0) } else { 1 };
+        let s = |i: usize, j: usize| {
+            face.surface.point_at(u0 + (u1 - u0) * i as f64 / nu as f64, v0 + (v1 - v0) * j as f64 / nv as f64)
+        };
         let mut tris = Vec::new();
-        for face in &self.faces {
-            if let Surface::Plane { normal, .. } = face.surface {
-                let rings: Vec<Vec<Vec3>> = self
-                    .face_uv_loops(face)
-                    .iter()
-                    .map(|lp| lp.iter().flat_map(UvCurve::samples).map(|[u, v]| face.surface.point_at(u, v)).collect())
-                    .collect();
-                tris.extend(triangulate_planar(&rings, if face.sense { normal } else { -normal }));
-                continue;
-            }
-            // Curved faces: a grid over their (u, v) rectangle. Only spheres
-            // and tori curve along v.
-            let [[u0, v0], [u1, v1]] = self.face_rect(face);
-            let nu = segments_for(u1 - u0);
-            let nv = if matches!(face.surface, Surface::Sphere { .. } | Surface::Torus { .. }) { segments_for(v1 - v0) } else { 1 };
-            let s = |i: usize, j: usize| {
-                face.surface.point_at(u0 + (u1 - u0) * i as f64 / nu as f64, v0 + (v1 - v0) * j as f64 / nv as f64)
-            };
-            for i in 0..nu {
-                for j in 0..nv {
-                    let q = [s(i, j), s(i + 1, j), s(i + 1, j + 1), s(i, j + 1)];
-                    for t in [[q[0], q[1], q[2]], [q[0], q[2], q[3]]] {
-                        // Skip the slivers that collapse at a pole or a cone's tip.
-                        if (t[1] - t[0]).cross(t[2] - t[0]).length() <= TOLERANCE {
-                            continue;
-                        }
-                        // Counter-clockwise in (u, v) faces along the surface normal.
-                        tris.push(if face.sense { t } else { [t[0], t[2], t[1]] });
+        for i in 0..nu {
+            for j in 0..nv {
+                let q = [s(i, j), s(i + 1, j), s(i + 1, j + 1), s(i, j + 1)];
+                for t in [[q[0], q[1], q[2]], [q[0], q[2], q[3]]] {
+                    // Skip the slivers that collapse at a pole or a cone's tip.
+                    if (t[1] - t[0]).cross(t[2] - t[0]).length() <= TOLERANCE {
+                        continue;
                     }
+                    // Counter-clockwise in (u, v) faces along the surface normal.
+                    tris.push(if face.sense { t } else { [t[0], t[2], t[1]] });
                 }
             }
         }

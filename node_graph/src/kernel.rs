@@ -5,6 +5,7 @@
 //! default backend is mini_brep; SMLib through FFI can be added later as one
 //! more implementation without touching the nodes.
 
+pub use mini_brep::BooleanOp;
 use mini_brep::{Brep, Profile, Ring, Vec3, check_revolve_profile};
 use std::fmt;
 use std::rc::Rc;
@@ -21,6 +22,8 @@ pub trait Solid: fmt::Debug {
     fn to_brep_array(&self, name: &str) -> BrepArray;
     /// Triangles for display, wound counter-clockwise seen from outside.
     fn tessellate(&self) -> Vec<[Vec3; 3]>;
+    /// Lets a kernel recognise its own solids (for booleans).
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// Builds solids. Every solid it returns has already passed its validity checks.
@@ -37,6 +40,10 @@ pub trait Kernel {
     }
     fn sphere(&self, _center: Vec3, _radius: f64) -> Result<Rc<dyn Solid>, String> {
         Err(format!("the {} kernel cannot make spheres", self.name()))
+    }
+    /// `a` op `b`, for solids this kernel made.
+    fn boolean(&self, _a: &dyn Solid, _b: &dyn Solid, _op: BooleanOp) -> Result<Rc<dyn Solid>, String> {
+        Err(format!("the {} kernel cannot do booleans", self.name()))
     }
 }
 
@@ -81,6 +88,19 @@ impl Kernel for MiniBrep {
         }
         checked(Brep::make_sphere(center, radius))
     }
+
+    fn boolean(&self, a: &dyn Solid, b: &dyn Solid, op: BooleanOp) -> Result<Rc<dyn Solid>, String> {
+        fn brep(s: &dyn Solid) -> Result<&Brep, String> {
+            s.as_any().downcast_ref::<Brep>().ok_or_else(|| "a solid from another kernel".to_string())
+        }
+        let r = brep(a)?.boolean(brep(b)?, op).map_err(|e| e.to_string())?;
+        match r.shells.len() {
+            0 => Err("the result is empty".into()),
+            1 => Ok(Rc::new(r)),
+            // mini_brep handles these, but BrepArray export writes one shell.
+            n => Err(format!("the result has {n} shells (separate pieces or a hollow inside); only one is supported for now")),
+        }
+    }
 }
 
 impl Solid for Brep {
@@ -92,5 +112,8 @@ impl Solid for Brep {
     }
     fn tessellate(&self) -> Vec<[Vec3; 3]> {
         Brep::tessellate(self)
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
